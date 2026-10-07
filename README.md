@@ -92,7 +92,7 @@ arena-assets semantic seats apply seats.yaml ./dataset [--overwrite]
 
 ### Sound assets
 
-A sound asset is a directory `Sound/<Name>/` holding its wav files and a `<Name>.yaml` manifest (version 2: `kind`, `level_db`, `loop`, `variants`, optional `desc` and `tags`). The manifest is the only annotation source: the build derives `annotation.yaml` from it (tags are the manifest tags, every variant's tags, and the kind) and fails on a manifest with the wrong version or without `kind`, `level_db` or `variants`.
+A sound asset is a directory `Sound/<Name>/` holding its wav files and a `<Name>.yaml` manifest (version 2: `kind`, `level_db`, `loop`, `variants`, optional `desc` and `tags`). The manifest is the only annotation source: the build derives `annotation.yaml` from it (tags are the manifest tags, every variant's tags, and `kind::<kind>`, stamped with the ASA revision) and fails on a manifest with the wrong version or without `kind`, `level_db` or `variants`.
 
 ```sh
 arena-assets db ./sounds build -t sound -i ./dataset

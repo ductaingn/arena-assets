@@ -10,6 +10,7 @@ import attrs
 import yaml
 
 from arena_assets.impl import ANNOTATION_NAME, Annotation, AssetType, convert_list_str
+from arena_assets.semantic import CURRENT_ASA
 from arena_assets.utils.logging import get_logger
 
 from . import DatabaseBuilder, OptionRegistry
@@ -85,13 +86,14 @@ class SoundAnnotation(Annotation):
         tags = [
             *_tag_list(data.get("tags"), str(manifest)),
             *(tag for variant in variants for tag in _tag_list(variant.get("tags"), f"{manifest} variant {variant['id']!r}")),
-            kind,
+            f"kind::{kind}",
         ]
         return cls(
             name=directory.name,
             path=str(directory),
             desc=desc,
             tags=list(dict.fromkeys(tags)),
+            asa=CURRENT_ASA,
             kind=kind,
             loop=bool(data.get("loop", False)),
             level_db=float(level_db),

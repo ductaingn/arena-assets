@@ -142,6 +142,34 @@ def test_material_kind_override_for_granite_trade_names(tmp_path):
     assert "kind::stone" in _load(path)["tags"]
 
 
+def test_sound_kind_comes_from_the_kind_field(tmp_path):
+    path = _write(
+        tmp_path / "Common" / "Sound" / "door_knock" / "annotation.yaml",
+        {"name": "door_knock", "path": "Sound/door_knock", "kind": "onset", "tags": ["knock", "onset"]},
+    )
+    assert fix_file(path, SPEC) is True
+    assert _load(path)["tags"] == ["domain::common", "kind::onset", "knock"]
+    assert _load(path)["kind"] == "onset"
+
+
+def test_sound_bare_tags_stay_bare(tmp_path):
+    path = _write(
+        tmp_path / "Common" / "Sound" / "greeting" / "annotation.yaml",
+        {"name": "greeting", "path": "Sound/greeting", "kind": "speech", "tags": ["pedestrian", "kitchen", "office", "appliance", "kind::speech"]},
+    )
+    fix_file(path, SPEC)
+    assert _load(path)["tags"] == ["domain::common", "kind::speech", "pedestrian", "kitchen", "office", "appliance"]
+
+
+def test_sound_without_a_kind_field_gets_no_kind(tmp_path):
+    path = _write(
+        tmp_path / "Common" / "Sound" / "chair" / "annotation.yaml",
+        {"name": "chair", "path": "Sound/chair", "tags": []},
+    )
+    fix_file(path, SPEC)
+    assert _load(path)["tags"] == ["domain::common"]
+
+
 def test_color_values_are_normalized(tmp_path):
     path = _write(
         tmp_path / "Residential" / "Object" / "Bed_B" / "annotation.yaml",

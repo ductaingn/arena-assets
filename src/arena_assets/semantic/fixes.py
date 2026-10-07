@@ -219,11 +219,16 @@ def fix_file(path: Path, spec: Spec, storage_class_domain: tuple[str | None, str
     else:
         tags = [str(tags_raw)]
 
+    sound_kind = str(raw.get("kind") or "") if asset_class == "sound" else ""
+
     # bare tags with a facet equivalent
     rewritten: list[str] = []
     for tag in tags:
         if "::" in tag:
             rewritten.append(tag)
+        elif asset_class == "sound":
+            if tag != sound_kind:
+                rewritten.append(tag)
         elif tag in _DOMAIN_BARE_TAGS:
             rewritten.append(f"domain::{tag}")
         elif tag in _ROOM_BARE_TAGS:
@@ -247,7 +252,7 @@ def fix_file(path: Path, spec: Spec, storage_class_domain: tuple[str | None, str
             "object": (_OBJECT_KIND_TABLE, _OBJECT_KIND_OVERRIDES),
             "material": (_MATERIAL_KIND_TABLE, _MATERIAL_KIND_OVERRIDES),
         }.get(asset_class)
-        kind = _infer_kind(name, *lookup) if lookup is not None else None
+        kind = sound_kind or (_infer_kind(name, *lookup) if lookup is not None else None)
         if kind is not None:
             tags.append(f"kind::{kind}")
 
