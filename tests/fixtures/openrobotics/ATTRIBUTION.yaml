@@ -1,0 +1,7 @@
+source: Open Robotics models on Gazebo Fuel
+url: https://fuel.gazebosim.org/1.0/OpenRobotics/models/aws_robomaker_warehouse_Lamp_01
+license: CC-BY-4.0
+license_url: http://creativecommons.org/licenses/by/4.0/
+authors: Open Robotics
+items:
+  - aws_robomaker_warehouse_Lamp_01.zip: version 4 of OpenRobotics/aws_robomaker_warehouse_Lamp_01, verbatim, sha256 3ae203b45b15577c47c5487a133c23349053b8be8f4a34dad1a8d232bb999fe9

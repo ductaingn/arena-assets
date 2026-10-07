@@ -25,6 +25,7 @@ def test_registry_lists_importers_by_kind_then_source():
         ("episode", "musohu"),
         ("object", "ai2thor"),
         ("object", "gso"),
+        ("object", "openrobotics"),
         ("scenario", "eth_ucy"),
         ("sound", "fsd50k"),
         ("suite", "barn"),
@@ -56,7 +57,7 @@ def test_meta_lookup_and_membership():
 
 
 def test_meta_error_lists_the_sources_of_the_kind():
-    with pytest.raises(KeyError, match="no object importer 'nope', registered: ai2thor, gso"):
+    with pytest.raises(KeyError, match="no object importer 'nope', registered: ai2thor, gso, openrobotics"):
         IMPORTERS.meta("object", "nope")
 
 

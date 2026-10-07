@@ -14,6 +14,7 @@ for name in ("chromadb", "bpy", "mathutils", "numpy", "scipy"):
 import arena_assets
 import arena_assets.importers
 import arena_assets.importers.gso
+import arena_assets.importers.openrobotics
 import arena_assets.impl
 import arena_assets.impl.build
 import arena_assets.impl.build.HumanDatabaseBuilder
