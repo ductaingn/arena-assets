@@ -10,7 +10,13 @@ Build, query, and manage 3D model databases for [Arena](https://github.com/Arena
 pip install ./src
 ```
 
-Note: if you want to install `arena_assets[build]`, you must use Python 3.11.* (bpy dependency).
+Model conversion (building objects, human previews, importing object datasets) runs in Blender, which only ships for Python 3.11. It lives in its own package, [`blender/`](blender), and runs as a worker process:
+
+```sh
+uv tool install --python 3.11 ./blender
+```
+
+That puts `arena-assets-blender` on PATH. To use an existing environment instead, set `ARENA_ASSETS_BLENDER` to the worker command, for example `ARENA_ASSETS_BLENDER="/path/to/venv/bin/python -m arena_assets_blender"`.
 
 The repository is also an `ament_cmake` ROS package; building it in a colcon workspace installs the CLI into a dedicated venv.
 

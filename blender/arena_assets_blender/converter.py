@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import io
+import logging
 import math
 import os
 import types
@@ -14,15 +15,13 @@ import bpy
 import mathutils
 import numpy as np
 
-from arena_assets.utils.geom import BoundingBox
-from arena_assets.utils.logging import get_logger
-
-from ..CoordinateSystem import CoordinateSystem
-from ..io_utils import capture_all_output
 from . import ModelFormat, sdf_model
+from .CoordinateSystem import CoordinateSystem
+from .geom import BoundingBox
+from .io_utils import capture_all_output
 from .lights import SourceLight, SourceMaterial
 
-logger = get_logger("ModelConverter")
+logger = logging.getLogger("ModelConverter")
 
 GLOW_MATERIALS = "glow_materials"
 

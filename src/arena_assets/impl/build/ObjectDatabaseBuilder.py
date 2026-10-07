@@ -17,11 +17,12 @@ from cattrs.gen import make_dict_structure_fn, make_dict_unstructure_fn, overrid
 from arena_assets import semantic
 from arena_assets.impl import ANNOTATION_NAME, AssetType, Face, SpatialAnnotation, collider, converter
 from arena_assets.impl.affordance import Affordances, structure_affordances, unstructure_affordances
+from arena_assets.utils import ModelConverter
 from arena_assets.utils.affordance import SEAT_FALLBACK, SEAT_SIZE, largest_seat, surface_z
 from arena_assets.utils.geom import BoundingBox
 from arena_assets.utils.logging import get_logger
 from arena_assets.utils.mesh_io import read_mesh
-from arena_assets.utils.ModelConverter import ModelFormat
+from arena_assets.utils.ModelConverter import BlenderWorker
 from arena_assets.utils.ModelConverter.lights import DEFAULT_CCT_K, Quaternion, SourceLight, SourceMaterial, Vector3, color_temperature, nearest_material
 from arena_assets.utils.ModelConverter.UsdBaker import UsdBaker
 
@@ -178,6 +179,11 @@ def place_slots(annotation: ObjectAnnotation, points: np.ndarray, triangles: np.
 BUILT_MODEL_FORMATS = ("usdz", "usd", "usdc", "usda", "fbx", "glb", "gltf", "obj", "sdf")
 
 
+def _mesh(value: list) -> tuple[np.ndarray, np.ndarray]:
+    """World-space vertices and triangle indices from the worker's triangles reply."""
+    return np.array(value[0], dtype=np.float64).reshape(-1, 3), np.array(value[1], dtype=np.int64).reshape(-1, 3)
+
+
 def built_model(dest: Path, name: str) -> Path | None:
     """The first model a build left in dest, by format preference, an SDF export standing in with the visual mesh in its directory."""
     for ext in BUILT_MODEL_FORMATS:
@@ -322,12 +328,13 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
-        self._formats: set[ModelFormat] = {
-            ModelFormat.USDZ,
-            ModelFormat.FBX,
-            ModelFormat.OBJ,
-        }
-        self._usd_baker: typing.Optional[UsdBaker] = None
+        self._formats: set[str] = {"usdz", "fbx", "obj"}
+        self._usd_baker: UsdBaker | None = None
+        self._blender = BlenderWorker()
+        if self._overwrite != OverwriteMode.ANNOTATIONS_ONLY:
+            self._pre.append(self._blender.start)
+            self._pre.append(self._resolve_formats)
+        self._post.append(self._blender.close)
 
         def store_db(annotation: ObjectAnnotation) -> None:
             self._db.store(AssetType.OBJECT.value, annotation)
@@ -357,13 +364,9 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
             if model is None:
                 logger.warning("%s has no built model to place its affordance slots on, run a model build", annotation.path)
                 return
-            from arena_assets.utils.ModelConverter.converter import ModelConverter
-
-            with ModelConverter() as model_converter:
-                model_converter.load(str(model))
-                model_converter.rectify()
-                bounding_box = model_converter.bounding_box().round(4)
-                points, triangles = model_converter.triangles()
+            values = self._blender.run([("load", str(model)), ("rectify",), ("bounding_box",), ("triangles",)]).values
+            bounding_box = BoundingBox(values[2]).round(4)
+            points, triangles = _mesh(values[3])
             if bounding_box.volume <= 0:
                 logger.warning("%s loaded without meshes, its affordance slots stay unplaced", model)
                 return
@@ -378,8 +381,6 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
 
     @classmethod
     def find_mainfile(cls, annotation: ObjectAnnotation) -> str | None:
-        from arena_assets.utils.ModelConverter.converter import ModelConverter
-
         return next(
             (
                 os.path.join(
@@ -395,17 +396,9 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
 
     @classmethod
     def is_usd(cls, filename: str) -> bool:
-        usd_extensions = {
-            ModelFormat.USD,
-            ModelFormat.USDA,
-            ModelFormat.USDC,
-            ModelFormat.USDZ,
-        }
-        return any(os.path.splitext(filename.lower())[-1].lstrip(".") == ext.value for ext in usd_extensions)
+        return os.path.splitext(filename.lower())[-1].lstrip(".") in {"usd", "usda", "usdc", "usdz"}
 
     def process_entity(self, annotation, dest):
-        from arena_assets.utils.ModelConverter.converter import ModelConverter
-
         baked_usd_path: Path | None = None
         try:
             main_file = self.find_mainfile(annotation)
@@ -426,42 +419,31 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
                 logger.info("Baked USD model %s to %s", input_file, baked_usd_path)
                 input_file = baked_usd_path
 
-            model_paths = (dest / f"{annotation.name}.{ext.value}" for ext in self._formats)
-
-            with ModelConverter() as model_converter:
-                model_converter.load(str(input_file))
-                rectified = model_converter.rectify()
-                bounding_box = model_converter.bounding_box().round(4)
-                source_lights = model_converter.lights()
-                model_converter.remove_lights()
-                extracted = object_lights(source_lights, model_converter.emissive_materials())
-                model_converter.prepare_glow(light.glow for light in annotation.lights or extracted if light.glow is not None)
+            scan = self._blender.run([("load", str(input_file)), ("rectify",), ("bounding_box",), ("lights",), ("remove_lights",), ("emissive_materials",), *([("triangles",)] if annotation.affordances else [])], keep=True)
+            try:
+                rectified = np.array(scan.values[1])
+                bounding_box = BoundingBox(scan.values[2]).round(4)
+                extracted = object_lights([SourceLight(**{key: tuple(value) if isinstance(value, list) else value for key, value in light.items()}) for light in scan.values[3]], [SourceMaterial(name=material["name"], center=tuple(material["center"])) for material in scan.values[5]])
+                steps: list[tuple] = [("prepare_glow", [light.glow for light in annotation.lights or extracted if light.glow is not None])]
                 if annotation.affordances:
-                    points, triangles = model_converter.triangles()
+                    points, triangles = _mesh(scan.values[6])
                     annotation.affordances = place_slots(annotation, points, triangles, bounding_box, recompute=self._recompute_affordances)
-
-                if self._previews_enabled:
-                    # model_converter.render_perspective(str(dest / f"{annotation.name}.png"), resolution=None, theta=annotation.face.angle + 30)
-                    model_converter.render_perspective(
-                        str(dest / f"{annotation.name}_thumb.png"),
-                        resolution=(512, 512),
-                        theta=math.radians(annotation.face.angle + 30),
-                    )
-                    model_converter.render_topdown(
-                        str(dest / f"{annotation.name}_topdown.png"),
-                        resolution=(512, 512),
-                    )
-                for model_path in model_paths:
-                    model_path.parent.mkdir(exist_ok=True)
-                    model_converter.save(str(model_path))
+            except Exception:
+                self._blender.run([])
+                raise
+            if self._previews_enabled:
+                steps.append(("render_perspective", str(dest / f"{annotation.name}_thumb.png"), {"resolution": (512, 512), "theta": math.radians(annotation.face.angle + 30)}))
+                steps.append(("render_topdown", str(dest / f"{annotation.name}_topdown.png"), {"resolution": (512, 512)}))
+            steps.extend(("save", str(dest / f"{annotation.name}.{ext}")) for ext in sorted(self._formats))
+            result = self._blender.run(steps)
 
             logger.info("Processed model %s", annotation.path)
-            for line in model_converter.stdout.splitlines():
+            for line in (scan.stdout + result.stdout).splitlines():
                 if line.startswith("Warning:"):
                     logger.warning("ModelConverter: %s", line)
                 else:
                     logger.info("ModelConverter: %s", line)
-            for line in model_converter.stderr.splitlines():
+            for line in (scan.stderr + result.stderr).splitlines():
                 logger.warning("ModelConverter: %s", line)
 
             annotation.bounding_box = bounding_box
@@ -504,18 +486,16 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
 
     @enable.register("formats")
     def sdf(self, formats: str | None = None):
-        self._formats.clear()
-        if formats is None:
-            formats = "*"
-        if formats == "*":
-            self._formats = set(ModelFormat.__members__.values())
-            return
-        for fmt in formats.split(","):
-            try:
-                self._formats.add(ModelFormat(fmt.lower()))
-                logger.info("Enabling %s export option.", fmt)
-            except ValueError:
-                logger.error("Unknown model format specified: %s", fmt)
+        self._formats = {fmt.lower() for fmt in (formats or "*").split(",")}
+        logger.info("Enabling %s export option.", ",".join(sorted(self._formats)))
+
+    def _resolve_formats(self) -> None:
+        known = set(ModelConverter.exts())
+        if "*" in self._formats:
+            self._formats = set(known)
+        for fmt in sorted(self._formats - known):
+            logger.error("Unknown model format specified: %s", fmt)
+        self._formats &= known
 
     @enable.register("procthor")
     def procthor(self):

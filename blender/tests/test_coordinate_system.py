@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from arena_assets.utils.CoordinateSystem import CoordinateSystem
+from arena_assets_blender.CoordinateSystem import CoordinateSystem
 
 
 def test_identity_transformation():

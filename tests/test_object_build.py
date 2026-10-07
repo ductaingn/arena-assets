@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -7,8 +8,8 @@ import pytest
 import yaml
 
 from arena_assets.impl import ANNOTATION_NAME
-from arena_assets.utils.CoordinateSystem import CoordinateSystem
 from arena_assets.utils.geom import BoundingBox
+from arena_assets.utils.ModelConverter import BlenderWorker
 
 BOX_FACES = [0, 1, 3, 2, 4, 6, 7, 5, 0, 4, 5, 1, 2, 3, 7, 6, 0, 2, 6, 4, 1, 5, 7, 3]
 UPRIGHT_BOX = BoundingBox(((-0.5, 0.5), (-1.0, 1.0), (0.0, 3.0)))
@@ -57,12 +58,12 @@ def Xform "Root"
         point3f[] points = [{points}]
     }}
 }}
-{extra}"""
+"""
 
 
-def _write_box_source(directory, up_axis="Z", extra=""):
+def _write_box_source(directory, up_axis="Z"):
     directory.mkdir(parents=True)
-    (directory / "box.usda").write_text(_usda_box(up_axis, extra))
+    (directory / "box.usda").write_text(_usda_box(up_axis))
     (directory / ANNOTATION_NAME).write_text(yaml.safe_dump({"desc": "box"}))
     return directory / "box.usda"
 
@@ -72,16 +73,15 @@ def _flat(bounding_box):
 
 
 def _loaded_box(path):
-    from arena_assets.utils.ModelConverter.converter import ModelConverter
-
-    with ModelConverter() as model_converter:
-        model_converter.load(str(path))
-        return model_converter.bounding_box().round(4)
+    worker = BlenderWorker()
+    try:
+        return BoundingBox(worker.run([("load", str(path)), ("bounding_box",)]).values[1]).round(4)
+    finally:
+        worker.close()
 
 
 @pytest.mark.parametrize("up_axis", ["Z", "Y"])
-def test_build_keeps_usd_source_upright(tmp_path, up_axis):
-    pytest.importorskip("bpy")
+def test_build_keeps_usd_source_upright(blender, tmp_path, up_axis):
     from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectDatabaseBuilder
 
     input_path = tmp_path / "input"
@@ -97,37 +97,6 @@ def test_build_keeps_usd_source_upright(tmp_path, up_axis):
     assert built is not None
     assert built.bounding_box == UPRIGHT_BOX
     assert _flat(_loaded_box(dest / "box.fbx")) == pytest.approx(_flat(UPRIGHT_BOX), abs=1e-3)
-
-
-def _transformed(path, extra_type=None):
-    import bpy
-
-    from arena_assets.utils.ModelConverter.converter import ModelConverter
-
-    with ModelConverter() as model_converter:
-        model_converter.load(str(path))
-        bpy.context.view_layer.update()
-        objects = {obj.type: obj for obj in bpy.context.scene.objects if obj.name != "Root"}
-        mesh = objects["MESH"]
-        anchor = None if extra_type is None else mesh.matrix_world.inverted() @ objects[extra_type].matrix_world.translation
-
-        model_converter.transform_coordinates(CoordinateSystem("X+", "Y+", "Z+"))
-        bpy.context.view_layer.update()
-
-        offset = None if extra_type is None else tuple(objects[extra_type].matrix_world.translation - mesh.matrix_world @ anchor)
-        return model_converter.bounding_box().round(4), offset
-
-
-@pytest.mark.parametrize("extra_type", ["LIGHT", "EMPTY"])
-def test_coordinate_transform_pivot_ignores_lights_and_empties(tmp_path, extra_type):
-    pytest.importorskip("bpy")
-
-    plain, _ = _transformed(_write_box_source(tmp_path / "plain"))
-    crowded, offset = _transformed(_write_box_source(tmp_path / "crowded", extra=EXTRAS[extra_type]), extra_type)
-
-    assert plain == BoundingBox(((-0.5, 0.5), (-3.0, 0.0), (-1.0, 1.0)))
-    assert crowded == plain
-    assert offset == pytest.approx((0.0, 0.0, 0.0), abs=1e-4)
 
 
 GLB_BUILD_SCRIPT = """
@@ -147,8 +116,7 @@ assert (dest / "box.glb").stat().st_size > 0
 """
 
 
-def test_process_exits_after_gltf_build(tmp_path):
-    pytest.importorskip("bpy")
+def test_process_exits_after_gltf_build(blender, tmp_path):
 
     _write_box_source(tmp_path / "input" / "Object" / "box")
     result = subprocess.run([sys.executable, "-c", GLB_BUILD_SCRIPT, str(tmp_path / "input"), str(tmp_path / "output")], capture_output=True, text=True, timeout=120)
@@ -156,8 +124,7 @@ def test_process_exits_after_gltf_build(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
-def test_build_bakes_the_declared_collider_rectified_with_the_model(tmp_path):
-    pytest.importorskip("bpy")
+def test_build_bakes_the_declared_collider_rectified_with_the_model(blender, tmp_path):
     import xml.etree.ElementTree as ET
 
     from pxr import Usd, UsdGeom, UsdPhysics
@@ -200,8 +167,7 @@ def test_build_bakes_the_declared_collider_rectified_with_the_model(tmp_path):
     assert [visual.findtext("./geometry/mesh/uri") for visual in link.findall("visual")] == ["box.dae"]
 
 
-def test_build_gives_usd_visual_meshes_collision(tmp_path):
-    pytest.importorskip("bpy")
+def test_build_gives_usd_visual_meshes_collision(blender, tmp_path):
     from pxr import Usd, UsdGeom, UsdPhysics
 
     from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectDatabaseBuilder
@@ -234,8 +200,7 @@ def _write_seat_source(directory, slots):
     (directory / ANNOTATION_NAME).write_text(yaml.safe_dump({"desc": "seat", "face": "+x", "affordances": {"sit": slots}}))
 
 
-def test_build_gives_sit_slots_the_seat_height(tmp_path):
-    pytest.importorskip("bpy")
+def test_build_gives_sit_slots_the_seat_height(blender, tmp_path):
     pytest.importorskip("arena_simulation_setup")
     from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectDatabaseBuilder
 
@@ -254,8 +219,7 @@ def test_build_gives_sit_slots_the_seat_height(tmp_path):
     assert placed["yaw"] == "+x"
 
 
-def test_annotation_refresh_keeps_the_built_seat_height(tmp_path):
-    pytest.importorskip("bpy")
+def test_annotation_refresh_keeps_the_built_seat_height(blender, tmp_path):
     pytest.importorskip("arena_simulation_setup")
     from arena_assets.impl import AssetType
     from arena_assets.impl.build import DatabaseBuilder, OverwriteMode
@@ -277,8 +241,7 @@ def test_annotation_refresh_keeps_the_built_seat_height(tmp_path):
     assert [slot["bbox"][2] for slot in slots] == [[0.0, 0.5], [0.0, 0.5]]
 
 
-def test_annotation_refresh_places_new_slots_on_the_built_model(tmp_path):
-    pytest.importorskip("bpy")
+def test_annotation_refresh_places_new_slots_on_the_built_model(blender, tmp_path):
     pytest.importorskip("arena_simulation_setup")
     from arena_assets.impl import AssetType
     from arena_assets.impl.build import DatabaseBuilder, OverwriteMode
@@ -297,8 +260,7 @@ def test_annotation_refresh_places_new_slots_on_the_built_model(tmp_path):
     assert (tmp_path / "output" / "Object" / "seat" / "seat.sdf" / "seat.dae").is_file()
 
 
-def test_annotation_refresh_with_recompute_replaces_a_hand_seat_height(tmp_path):
-    pytest.importorskip("bpy")
+def test_annotation_refresh_with_recompute_replaces_a_hand_seat_height(blender, tmp_path):
     pytest.importorskip("arena_simulation_setup")
     from arena_assets.impl import AssetType
     from arena_assets.impl.build import DatabaseBuilder, OverwriteMode
@@ -317,8 +279,7 @@ def test_annotation_refresh_with_recompute_replaces_a_hand_seat_height(tmp_path)
     assert yaml.safe_load((dest / ANNOTATION_NAME).read_text())["affordances"]["sit"][0]["bbox"][2] == [0.0, 0.45]
 
 
-def test_annotation_refresh_keeps_the_asset_when_placing_slots_fails(tmp_path):
-    pytest.importorskip("bpy")
+def test_annotation_refresh_keeps_the_asset_when_placing_slots_fails(blender, tmp_path):
     pytest.importorskip("arena_simulation_setup")
     from arena_assets.impl import AssetType
     from arena_assets.impl.build import DatabaseBuilder, OverwriteMode
@@ -347,3 +308,12 @@ def test_annotation_refresh_without_a_built_model_leaves_new_slots_unplaced(tmp_
 
     slots = yaml.safe_load((tmp_path / "output" / "Object" / "seat" / ANNOTATION_NAME).read_text())["affordances"]["sit"]
     assert slots == [{"bbox": [[-0.2, 0.2], [-0.2, 0.2]], "yaw": "-y"}]
+
+
+def test_host_and_worker_write_the_same_sdf_model(blender_python):
+    from arena_assets.utils.ModelConverter import environment, sdf_model
+
+    glow = [("glow_Shade", "box.glow_0.dae", "<material/>")]
+    script = "import json, sys\nfrom arena_assets_blender import sdf_model\nglow = [tuple(g) for g in json.loads(sys.argv[1])]\nprint(json.dumps([sdf_model('box'), sdf_model('box', glow), sdf_model('box', plain=False)]))"
+    worker = subprocess.run([blender_python, "-c", script, json.dumps(glow)], capture_output=True, text=True, timeout=120, env=environment(), check=True)
+    assert json.loads(worker.stdout) == [sdf_model("box"), sdf_model("box", glow), sdf_model("box", plain=False)]

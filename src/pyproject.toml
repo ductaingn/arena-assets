@@ -12,23 +12,16 @@ authors = [
 ]
 dependencies = [
     "chromadb~=1.0.21",
-    "numpy~=1.26.4",
-    "scipy~=1.15.3",
     "pyyaml~=6.0.2",
-    "mathutils~=3.3.0",
     "attrs~=25.3.0",
     "cattrs~=25.2.0",
     "typer~=0.19.1",
     "enlighten~=1.14.1",
     "usd-core>=26.3",
 ]
-# requires-python = "==3.11.*" # only required for arena_assets[build]
 
 
 [project.optional-dependencies]
-build = [
-    "bpy~=4.5.3",
-]
 test = [
     "pytest~=8.0",
 ]
