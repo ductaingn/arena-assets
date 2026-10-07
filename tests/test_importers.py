@@ -27,17 +27,21 @@ def test_registry_lists_importers_by_kind_then_source():
         ("object", "gso"),
         ("object", "openrobotics"),
         ("scenario", "eth_ucy"),
+        ("scenario", "socnavbench"),
         ("sound", "fsd50k"),
         ("suite", "barn"),
+        ("suite", "socnavbench"),
         ("world", "barn"),
+        ("world", "houseexpo"),
         ("world", "procthor"),
     ]
 
 
 def test_kinds_and_the_sources_of_a_kind():
     assert IMPORTERS.kinds() == ["episode", "object", "scenario", "sound", "suite", "world"]
-    assert IMPORTERS.names("world") == ["barn", "procthor"]
+    assert IMPORTERS.names("world") == ["barn", "houseexpo", "procthor"]
     assert IMPORTERS.kinds_of("barn") == ["suite", "world"]
+    assert IMPORTERS.kinds_of("socnavbench") == ["scenario", "suite"]
     assert IMPORTERS.kinds_of("nope") == []
 
 

@@ -42,9 +42,9 @@ def test_kind_alone_lists_its_sources():
     result = runner.invoke(app, ["import", "world"])
     assert result.exit_code == 0
     lines = result.output.strip().splitlines()
-    assert [tuple(line.split()[:2]) for line in lines if line.startswith("world ")] == [("world", "barn"), ("world", "procthor")]
+    assert [tuple(line.split()[:2]) for line in lines if line.startswith("world ")] == [("world", "barn"), ("world", "houseexpo"), ("world", "procthor")]
     assert not any(line.startswith("object ") for line in lines)
-    assert "2 source(s) of kind world, list one's items with: import world SOURCE" in lines
+    assert "3 source(s) of kind world, list one's items with: import world SOURCE" in lines
 
 
 def test_unknown_kind_lists_the_kinds():

@@ -178,10 +178,13 @@ for _meta in (
     ImporterMeta("openrobotics", "object", "arena_assets", "arena_assets.importers.openrobotics:OpenRobotics", License.YES, "fuel", OnDemand.ITEM, "Open Robotics furniture, appliance, hospital, office and warehouse models from Gazebo Fuel, the CC0 and CC BY 4.0 ones"),
     ImporterMeta("procthor", "world", "arena_simulation_setup", "arena_simulation_setup.adapters.procthor:ProcTHOR", License.YES, "github", OnDemand.CHUNK, "ProcTHOR-10K houses as worlds of typed rooms, walls, doors and AI2-THOR furniture, split files from GitHub LFS"),
     ImporterMeta("barn", "world", "arena_simulation_setup", "arena_simulation_setup.adapters.barn:BARNWorld", License.YES, "github", OnDemand.ITEM, "BARN challenge worlds 0 to 299 with the challenge start and goal as scenario, world files from Daffan/the-barn-challenge"),
+    ImporterMeta("houseexpo", "world", "arena_simulation_setup", "arena_simulation_setup.adapters.houseexpo:HouseExpo", License.UNCLEAR, "github", OnDemand.BULK, "HouseExpo floor plans as worlds of labeled rooms and walls, 35k plans in one archive, an MIT repository derived from SUNCG"),
     ImporterMeta("barn", "suite", "arena_evaluation", "arena_evaluation.adapters.barn:BARN", License.YES, "github", OnDemand.ITEM, "BARN challenge suite with its 300 worlds bundled plus a contest and a report manifest, world files and reference paths from Daffan/the-barn-challenge"),
+    ImporterMeta("socnavbench", "suite", "arena_evaluation", "arena_evaluation.adapters.socnavbench:SocNavBenchSuite", License.UNCLEAR, "github", OnDemand.ITEM, "SocNavBench curated episodes on the ETH and Zara scenes as a suite with a contest and a report manifest"),
     ImporterMeta(
         "eth_ucy", "scenario", "task_generator", "task_generator.adapters.eth_ucy:ETHUCY", License.UNCLEAR, "github", OnDemand.ITEM, "ETH and UCY pedestrian sequences (eth, hotel, univ, zara01, zara02) as replay scenarios, each bringing a world of the area its pedestrians walked, SocNavBench's interpolated copies"
     ),
+    ImporterMeta("socnavbench", "scenario", "task_generator", "task_generator.adapters.socnavbench:SocNavBench", License.UNCLEAR, "github", OnDemand.ITEM, "SocNavBench curated episodes on the ETH and Zara scenes as replay scenarios with a robot start and goal, each bringing the world of its scene"),
     ImporterMeta("fsd50k", "sound", "arena_simulation_setup", "arena_simulation_setup.adapters.fsd50k:FSD50K", License.YES, "hfhub", OnDemand.ITEM, "FSD50K CC0 and CC BY 3.0 clips as sound items"),
     ImporterMeta("musohu", "episode", "arena_evaluation", "arena_evaluation.adapters.musohu:MuSoHu", License.YES, "http", OnDemand.ITEM, "MuSoHu rosbag1 human navigation runs as evaluation recorder episodes"),
 ):
