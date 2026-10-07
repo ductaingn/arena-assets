@@ -1,0 +1,8 @@
+source: Google Scanned Objects on Gazebo Fuel
+url: https://fuel.gazebosim.org/1.0/GoogleResearch/models/Jawbone_UP24_Wireless_Activity_Tracker_Pink_Coral_L
+license: CC-BY-4.0
+license_url: http://creativecommons.org/licenses/by/4.0/
+authors: Google Research (Google LLC, scanned-objects@google.com)
+citation: Downs et al., Google Scanned Objects, A High-Quality Dataset of 3D Scanned Household Items, ICRA 2022
+items:
+  - Jawbone_UP24_Wireless_Activity_Tracker_Pink_Coral_L.zip: version 1 of GoogleResearch/Jawbone_UP24_Wireless_Activity_Tracker_Pink_Coral_L, sha256 007d279faae304d41d5c4d7185c12f772a14ecebddfa14fb35f6cde1d8c0047c

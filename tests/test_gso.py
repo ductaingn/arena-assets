@@ -1,0 +1,150 @@
+import json
+import shutil
+import zipfile
+from pathlib import Path
+
+import pytest
+import yaml
+
+from arena_assets.impl import ANNOTATION_NAME, DATABASE_NAME
+from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectAnnotation, ObjectDatabaseBuilder
+from arena_assets.importers import ATTRIBUTION_FILE, IMPORTERS, read_attribution
+from arena_assets.importers.gso import stage
+from arena_assets.importers.providers import Fuel
+from arena_assets.semantic import CURRENT_ASA
+from arena_assets.utils.Database import Database
+
+ITEM = "Jawbone_UP24_Wireless_Activity_Tracker_Pink_Coral_L"
+FIXTURE = Path(__file__).parent / "fixtures" / "gso" / f"{ITEM}.zip"
+RELPATH = Path("Common") / "Object" / ITEM
+EXTENTS = (0.0812, 0.0583, 0.0152)
+
+
+def importer(tmp_path: Path):
+    return IMPORTERS.load("object", "gso")(cache=tmp_path / "cache", provider=Fuel("GoogleResearch"))
+
+
+def seed(tmp_path: Path, metadata: dict | None = None) -> Path:
+    src = tmp_path / "cache" / f"{ITEM}.zip"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(FIXTURE, src)
+    if metadata is not None:
+        src.with_suffix(".json").write_text(json.dumps(metadata))
+    return src
+
+
+def staged(tmp_path: Path, metadata: dict | None = None) -> Path:
+    return stage(ITEM, seed(tmp_path, metadata), tmp_path / "dataset")
+
+
+def convert(tmp_path: Path, metadata: dict | None = None) -> Path:
+    out = tmp_path / "gso"
+    assert importer(tmp_path).convert(ITEM, seed(tmp_path, metadata), out) == str(RELPATH)
+    return out
+
+
+def vertices(mesh: Path) -> list[tuple[float, float, float]]:
+    return [tuple(map(float, line.split()[1:4])) for line in mesh.read_text().splitlines() if line.startswith("v ")]
+
+
+def test_registry_resolves_gso_with_a_default_provider():
+    cls = IMPORTERS.load("object", "gso")
+    assert cls.meta.kind == "object"
+    assert cls.default_provider().url(f"{ITEM}/tip/{ITEM}.zip") == f"https://fuel.gazebosim.org/1.0/GoogleResearch/models/{ITEM}/tip/{ITEM}.zip"
+
+
+def test_stage_is_object_builder_input_with_one_model_file(tmp_path):
+    source = staged(tmp_path)
+    assert source == tmp_path / "dataset" / RELPATH
+    assert sorted(path.relative_to(source).as_posix() for path in source.rglob("*") if path.is_file()) == [ANNOTATION_NAME, "materials/textures/texture.png", "meshes/model.mtl", "meshes/model.obj"]
+    builder = ObjectDatabaseBuilder(input_path=tmp_path / "dataset" / "Common", output_path=tmp_path / "build")
+    found = list(builder.discover())
+    assert [annotation.name for annotation in found] == [ITEM]
+    assert Path(found[0].path) == source
+
+
+def test_stage_points_the_texture_map_at_an_existing_file(tmp_path):
+    source = staged(tmp_path)
+    maps = [line.split()[1] for line in (source / "meshes" / "model.mtl").read_text().splitlines() if line.startswith("map_Kd")]
+    assert maps == ["../materials/textures/texture.png"]
+    assert (source / "meshes" / maps[0]).is_file()
+
+
+def test_stage_turns_the_z_up_mesh_y_up(tmp_path):
+    with zipfile.ZipFile(FIXTURE) as archive:
+        upstream = [tuple(map(float, line.split()[1:4])) for line in archive.read("meshes/model.obj").decode().splitlines() if line.startswith("v ")]
+    turned = vertices(staged(tmp_path) / "meshes" / "model.obj")
+    assert turned == [pytest.approx((x, z, -y)) for x, y, z in upstream]
+    heights = [y for _, y, _ in turned]
+    assert min(heights) == pytest.approx(0.0, abs=1e-4)
+    assert max(heights) - min(heights) == pytest.approx(EXTENTS[2], abs=1e-4)
+
+
+def test_stage_annotates_with_taxonomy_tags(tmp_path):
+    source = staged(tmp_path, {"name": ITEM, "categories": ["Consumer Goods", "Toys"]})
+    raw = yaml.safe_load((source / ANNOTATION_NAME).read_text())
+    assert raw["asa"] == CURRENT_ASA
+    assert raw["desc"]
+    assert raw["tags"] == ["domain::common", "kind::consumer_goods", "origin::gso", "toys"]
+
+
+def test_stage_without_categories_keeps_origin_and_domain(tmp_path):
+    raw = yaml.safe_load((staged(tmp_path) / ANNOTATION_NAME).read_text())
+    assert raw["tags"] == ["domain::common", "origin::gso"]
+
+
+def test_attribution_is_cc_by_google(tmp_path):
+    attribution = importer(tmp_path).attribution(ITEM)
+    assert attribution.license == "CC-BY-4.0"
+    assert attribution.url == f"https://fuel.gazebosim.org/1.0/GoogleResearch/models/{ITEM}"
+    assert "Google" in attribution.authors
+
+
+def test_convert_builds_a_native_object_item(blender, tmp_path):
+    out = convert(tmp_path, {"name": ITEM, "categories": ["Consumer Goods"]})
+    target = out / RELPATH
+    assert (target / f"{ITEM}.usdz").stat().st_size > 0
+    assert (target / f"{ITEM}.fbx").stat().st_size > 0
+    assert (target / f"{ITEM}.sdf" / f"{ITEM}.sdf").read_text().count(f"<uri>{ITEM}.dae</uri>") == 2
+    assert (target / f"{ITEM}.sdf" / f"{ITEM}.dae").stat().st_size > 0
+    for preview in (f"{ITEM}_thumb.png", f"{ITEM}_topdown.png"):
+        assert (target / preview).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert not (tmp_path / "cache" / "stage" / ITEM).exists()
+
+
+def test_convert_annotation_is_measured_upright(blender, tmp_path):
+    out = convert(tmp_path, {"name": ITEM, "categories": ["Consumer Goods"]})
+    annotation = ObjectDatabaseBuilder.read_annotation_file(out / RELPATH)
+    assert isinstance(annotation, ObjectAnnotation)
+    box = annotation.bounding_box
+    assert (box.max_x - box.min_x, box.max_y - box.min_y, box.max_z - box.min_z) == pytest.approx(EXTENTS, abs=2e-4)
+    assert box.min_z == pytest.approx(0.0, abs=1e-4)
+    raw = yaml.safe_load((out / RELPATH / ANNOTATION_NAME).read_text())
+    assert raw["path"] == f"Object/{ITEM}"
+    assert raw["asa"] == CURRENT_ASA
+    assert raw["tags"] == ["domain::common", "kind::consumer_goods", "origin::gso"]
+
+
+def test_convert_indexes_the_item_in_the_domain_database(blender, tmp_path):
+    out = convert(tmp_path)
+    listed = Database(out / "Common" / DATABASE_NAME).list_all("object")
+    assert listed["ids"] == [f"Object/{ITEM}"]
+
+
+def test_reconvert_replaces_the_item(blender, tmp_path):
+    out = convert(tmp_path)
+    stale = out / RELPATH / "stale.txt"
+    stale.write_text("x")
+    convert(tmp_path)
+    assert not stale.exists()
+    assert (out / RELPATH / f"{ITEM}.usdz").is_file()
+
+
+@pytest.mark.network
+def test_import_item_end_to_end(blender, tmp_path):
+    target = importer(tmp_path).import_item(ITEM, tmp_path / "gso")
+    assert target == tmp_path / "gso" / RELPATH
+    assert (target / f"{ITEM}.usdz").is_file()
+    attribution = read_attribution(target / ATTRIBUTION_FILE)
+    assert attribution.license == "CC-BY-4.0"
+    assert ObjectDatabaseBuilder.read_annotation_file(target).tags
