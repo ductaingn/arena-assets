@@ -1,18 +1,23 @@
+from __future__ import annotations
+
+import typing
 import uuid
 from pathlib import Path
 
-import chromadb
-import chromadb.api.models.Collection
-import chromadb.api.types
-from chromadb.utils import embedding_functions
-
 from ..impl import Annotation
+
+if typing.TYPE_CHECKING:
+    import chromadb.api.models.Collection
+    import chromadb.api.types
 
 TextOrEmbedding = str | list[float]
 
 
 class Database:
     def __init__(self, path: str | Path):
+        import chromadb
+        from chromadb.utils import embedding_functions
+
         self._client = chromadb.PersistentClient(path=str(path))
         self._embedding_function = embedding_functions.DefaultEmbeddingFunction()
 

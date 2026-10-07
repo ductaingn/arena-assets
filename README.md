@@ -7,8 +7,10 @@ Build, query, and manage 3D model databases for [Arena](https://github.com/Arena
 ## Installation
 
 ```sh
-pip install ./src
+pip install "./src[db]"
 ```
+
+Python 3.12. The `db` extra (ChromaDB) is needed for `db build`, `db query` and `db list`, everything else runs without it.
 
 Model conversion (building objects, human previews, importing object datasets) runs in Blender, which only ships for Python 3.11. It lives in its own package, [`blender/`](blender), and runs as a worker process:
 
@@ -18,7 +20,7 @@ uv tool install --python 3.11 ./blender
 
 That puts `arena-assets-blender` on PATH. To use an existing environment instead, set `ARENA_ASSETS_BLENDER` to the worker command, for example `ARENA_ASSETS_BLENDER="/path/to/venv/bin/python -m arena_assets_blender"`.
 
-The repository is also an `ament_cmake` ROS package; building it in a colcon workspace installs the CLI into a dedicated venv.
+The repository is also an `ament_python` ROS package: in the Arena workspace it is a member of the shared uv workspace and `colcon build` installs the `arena_assets` console script for `ros2 run arena_assets arena_assets`. The Blender worker is not part of that build.
 
 ## Usage
 
@@ -228,7 +230,7 @@ Specifying `-o bake-mdl` without a path uses a docker image from the [Nvidia nvc
 ## Development
 
 ```sh
-pip install "./src[test]"
+pip install "./src[db,test]"
 pre-commit install
 
 pytest tests/

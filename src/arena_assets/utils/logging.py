@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import atexit
 import logging
 import sys
@@ -35,7 +37,7 @@ def initialize(silent: bool = False, log_level: str = "WARNING"):
     _logger = logging.getLogger()
 
 
-def get_manager() -> enlighten.Manager:
+def get_manager() -> enlighten.Manager | enlighten.NotebookManager:
     """Get the global progress manager instance."""
     return _manager
 
