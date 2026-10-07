@@ -4,6 +4,7 @@ import typer
 
 from arena_assets.cli.collider import add_to_cmd as add_collider
 from arena_assets.cli.db import add_to_cmd as add_db
+from arena_assets.cli.import_ import add_to_cmd as add_import
 from arena_assets.cli.net import add_to_cmd as add_net
 from arena_assets.cli.semantic import add_to_cmd as add_semantic
 from arena_assets.cli.splat import add_to_cmd as add_splat
@@ -12,6 +13,7 @@ from arena_assets.cli.splat import add_to_cmd as add_splat
 def add_cmd(app: typer.Typer):
     add_collider(app)
     add_db(app)
+    add_import(app)
     add_net(app)
     add_semantic(app)
     add_splat(app)

@@ -102,6 +102,17 @@ arena-assets db ./sounds query sound "steps on wood" --filter "kind=footstep" -n
 
 `kind`, `loop`, `level_db`, and the comma-joined variant ids are stored as metadata.
 
+### Import upstream datasets
+
+```sh
+arena-assets import                         # registered sources by kind, with license verdict and host
+arena-assets import object                  # sources of one kind
+arena-assets import object gso              # item ids of one source
+arena-assets import object gso Cole_Hardware_Hammer_Black -o ./gso
+```
+
+Importers are registered by kind and source, so one source can serve several kinds (`import world barn 17` is one challenge world, `import suite barn barn` the whole benchmark). Each item is fetched into a cache, converted into the kind's directory layout under `--out` and marked with an `ATTRIBUTION.yaml`. A download that gets a 5xx, 408 or 429 answer, no answer within 30 s, a dropped connection or a short body is tried four times with a doubling pause before the import fails. The default target is the imported root (`$ARENA_ASSETS_DIR_IMPORTED`, else `$ARENA_ASSETS_DIR/_imported`, worlds under its `worlds/`), which the resolvers of every kind read after the curated local root, so an imported item resolves like any local one. Object sources such as `gso` are staged as a dataset and run through the same `db build` as native objects (`formats=usdz,sdf,fbx` plus `previews`), so they need the Blender worker and the `db` extra, and `--out/Common` is a queryable database.
+
 ### Upload a built database
 
 ```sh
