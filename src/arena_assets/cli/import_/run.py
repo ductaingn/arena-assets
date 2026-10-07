@@ -94,7 +94,7 @@ def import_command(
 
     if not items and not all_:
         count = 0
-        for item in importer.items():
+        for item in importer.cached_items():
             print(item)
             count += 1
         safe_echo(f"{count} {kind} item(s) in {source}, import one with: import {kind} {source} ITEM [--out DIR], default target: {_target_hint(importer_class)}", ctx)

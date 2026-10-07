@@ -2,6 +2,7 @@ import json
 import shutil
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from arena_assets.__main__ import app
@@ -110,3 +111,14 @@ def test_out_default_follows_the_imported_assets_dir(blender, tmp_path):
     result = runner.invoke(app, ["-s", "import", "object", "gso", ITEM], env={"ARENA_ASSETS_DIR": str(tmp_path), "ARENA_ASSETS_DIR_IMPORTED": str(tmp_path / "mine")})
     assert result.exit_code == 0, result.output
     assert result.output.strip() == str(tmp_path / "mine" / RELPATH)
+
+
+def test_bare_source_listing_caches_the_items_for_completion(tmp_path):
+    pytest.importorskip("arena_simulation_setup.adapters.barn")
+    result = runner.invoke(app, ["-s", "import", "world", "barn", "--cache", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    lines = result.output.strip().splitlines()
+    assert lines[:3] == ["0", "1", "2"]
+    cached = json.loads((tmp_path / "items.world.json").read_text())
+    assert cached["items"] == [str(index) for index in range(300)]
+    assert cached["expires_at"] is None

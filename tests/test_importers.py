@@ -1,5 +1,14 @@
+import contextlib
+import functools
+import http.server
+import json
+import logging
+import socket
 import subprocess
 import sys
+import threading
+import time
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -13,9 +22,13 @@ from arena_assets.importers import (
     ImporterMeta,
     ImporterRegistry,
     License,
+    LISTING_TTL_S,
     OnDemand,
+    listing_path,
     read_attribution,
+    read_listing,
     write_attribution,
+    write_listing,
 )
 from arena_assets.importers.providers import Http
 
@@ -150,3 +163,97 @@ def without_assets_dir():
     yield
     if saved is not None:
         os.environ["ARENA_ASSETS_DIR"] = saved
+
+
+class Quick(Http):
+    backoff = 0.0
+
+
+class Listed(Counting):
+    meta = ImporterMeta("listed", "world", "arena_assets", "tests.test_importers:Listed", License.YES, "http", OnDemand.ITEM, "test double")
+
+    def items(self):
+        return self.provider.read(self.provider.url("items.txt"))[0].decode().split()
+
+
+class Pinned(Listed):
+    meta = ImporterMeta("pinned", "world", "arena_assets", "tests.test_importers:Pinned", License.YES, "http", OnDemand.ITEM, "test double", listing_ttl_s=None)
+
+
+@contextlib.contextmanager
+def serving(root: Path):
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=str(root)))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+class Quiet(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, format: str, *args: object):
+        pass
+
+
+def closed_port() -> str:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return f"http://127.0.0.1:{probe.getsockname()[1]}"
+
+
+def test_item_list_is_fetched_once_and_kept_for_a_day_per_kind(tmp_path):
+    (tmp_path / "host").mkdir()
+    (tmp_path / "host" / "items.txt").write_text("a b c")
+    with serving(tmp_path / "host") as base:
+        start = time.time()
+        assert Listed(cache=tmp_path / "cache", provider=Quick(base)).cached_items() == ["a", "b", "c"]
+    path = tmp_path / "cache" / "items.world.json"
+    assert path == listing_path(tmp_path / "cache", "world")
+    listing = read_listing(path)
+    assert listing.items == ["a", "b", "c"]
+    assert start <= listing.fetched_at <= time.time()
+    assert listing.expires_at == listing.fetched_at + LISTING_TTL_S
+    assert Listed(cache=tmp_path / "cache", provider=Quick(closed_port())).cached_items() == ["a", "b", "c"]
+
+
+def test_expired_item_list_is_fetched_again(tmp_path):
+    write_listing(listing_path(tmp_path / "cache", "world"), ["old"], LISTING_TTL_S, time.time() - LISTING_TTL_S - 1)
+    (tmp_path / "host").mkdir()
+    (tmp_path / "host" / "items.txt").write_text("new")
+    with serving(tmp_path / "host") as base:
+        assert Listed(cache=tmp_path / "cache", provider=Quick(base)).cached_items() == ["new"]
+    assert read_listing(listing_path(tmp_path / "cache", "world")).items == ["new"]
+
+
+def test_item_list_of_a_pinned_source_never_expires(tmp_path):
+    (tmp_path / "host").mkdir()
+    (tmp_path / "host" / "items.txt").write_text("x")
+    with serving(tmp_path / "host") as base:
+        Pinned(cache=tmp_path / "cache", provider=Quick(base)).cached_items()
+    listing = read_listing(listing_path(tmp_path / "cache", "world"))
+    assert listing.expires_at is None
+    assert not listing.expired(time.time() + 10 * LISTING_TTL_S)
+
+
+def test_stale_item_list_stands_in_while_the_host_fails(tmp_path, caplog):
+    write_listing(listing_path(tmp_path / "cache", "world"), ["old"], LISTING_TTL_S, time.time() - LISTING_TTL_S - 1)
+    with caplog.at_level(logging.WARNING, logger="arena_assets.importers"):
+        assert Listed(cache=tmp_path / "cache", provider=Quick(closed_port())).cached_items() == ["old"]
+    assert read_listing(listing_path(tmp_path / "cache", "world")).items == ["old"]
+
+
+def test_item_list_without_a_cache_raises_while_the_host_fails(tmp_path):
+    with pytest.raises(urllib.error.URLError):
+        Listed(cache=tmp_path / "cache", provider=Quick(closed_port())).cached_items()
+    assert not (tmp_path / "cache").exists()
+
+
+def test_unreadable_item_list_counts_as_missing(tmp_path):
+    path = listing_path(tmp_path, "world")
+    path.write_text("{not json")
+    assert read_listing(path) is None
+    path.write_text(json.dumps({"items": ["a"]}))
+    assert read_listing(path) is None

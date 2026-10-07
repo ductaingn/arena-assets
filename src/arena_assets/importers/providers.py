@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 _CHUNK = 1 << 20
 _LINK_NEXT = re.compile(r'<([^>]+)>;\s*rel="next"')
 _TRANSIENT_STATUS = frozenset({408, 429, 500, 502, 503, 504})
-_TRANSPORT_ERRORS = (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException)
+TRANSPORT_ERRORS = (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException)
 
 _T = typing.TypeVar("_T")
 
@@ -49,7 +49,7 @@ class Provider(abc.ABC):
         for attempt in range(1, self.attempts):
             try:
                 return call()
-            except _TRANSPORT_ERRORS as error:
+            except TRANSPORT_ERRORS as error:
                 if not transient(error):
                     raise
                 pause = self.backoff * 2 ** (attempt - 1)

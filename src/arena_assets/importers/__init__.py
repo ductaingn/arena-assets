@@ -5,7 +5,10 @@ from __future__ import annotations
 import abc
 import enum
 import importlib
+import json
+import logging
 import os
+import time
 import typing
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -13,9 +16,13 @@ from pathlib import Path
 import attrs
 import yaml
 
-from arena_assets.importers.providers import Provider
+from arena_assets.importers.providers import TRANSPORT_ERRORS, Provider
+
+logger = logging.getLogger(__name__)
 
 ATTRIBUTION_FILE = "ATTRIBUTION.yaml"
+LISTING_FILE = "items.{kind}.json"
+LISTING_TTL_S = 24 * 3600.0
 
 
 class License(enum.Enum):
@@ -42,6 +49,41 @@ class ImporterMeta:
     host: str
     on_demand: OnDemand
     description: str
+    listing_ttl_s: float | None = LISTING_TTL_S
+
+
+@attrs.frozen
+class Listing:
+    """Item ids of one source and kind as last fetched, expires_at None for a list that never changes."""
+
+    items: list[str]
+    fetched_at: float
+    expires_at: float | None
+
+    def expired(self, now: float) -> bool:
+        return self.expires_at is not None and now >= self.expires_at
+
+
+def listing_path(cache: Path, kind: str) -> Path:
+    return cache / LISTING_FILE.format(kind=kind)
+
+
+def read_listing(path: Path) -> Listing | None:
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return Listing(items=[str(item) for item in data["items"]], fetched_at=float(data["fetched_at"]), expires_at=None if data["expires_at"] is None else float(data["expires_at"]))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def write_listing(path: Path, items: list[str], ttl_s: float | None, now: float) -> Listing:
+    listing = Listing(items=items, fetched_at=now, expires_at=None if ttl_s is None else now + ttl_s)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_name(f"{path.name}.{os.getpid()}.part")
+    part.write_text(json.dumps(attrs.asdict(listing)))
+    part.replace(path)
+    return listing
 
 
 @attrs.frozen
@@ -91,6 +133,22 @@ class Importer(abc.ABC):
 
     @abc.abstractmethod
     def attribution(self, item: str) -> Attribution: ...
+
+    def cached_items(self) -> list[str]:
+        """Item ids from the listing cache while it is fresh, else fetched and cached, the stale list when the host fails."""
+        path = listing_path(self.cache, self.meta.kind)
+        cached = read_listing(path)
+        now = time.time()
+        if cached is not None and not cached.expired(now):
+            return cached.items
+        try:
+            items = list(self.items())
+        except TRANSPORT_ERRORS as error:
+            if cached is None:
+                raise
+            logger.warning("%s %s: listing the items failed (%s), showing the list fetched %s", self.meta.kind, self.meta.name, error, time.strftime("%Y-%m-%d %H:%M", time.localtime(cached.fetched_at)))
+            return cached.items
+        return write_listing(path, items, self.meta.listing_ttl_s, now).items
 
     def import_item(self, item: str, out: Path) -> Path:
         src = self.fetch(item)
@@ -174,18 +232,16 @@ IMPORTERS = ImporterRegistry()
 
 for _meta in (
     ImporterMeta("gso", "object", "arena_assets", "arena_assets.importers.gso:GSO", License.YES, "fuel", OnDemand.ITEM, "Google Scanned Objects, 1k household objects from Gazebo Fuel"),
-    ImporterMeta("ai2thor", "object", "arena_assets", "arena_assets.importers.ai2thor:AI2THOR", License.YES, "hfhub", OnDemand.ITEM, "AI2-THOR objects, the ProcTHOR, iTHOR and RoboTHOR asset set, ranged reads from the ManiSkill copy of the HSSD glTF conversion"),
+    ImporterMeta("ai2thor", "object", "arena_assets", "arena_assets.importers.ai2thor:AI2THOR", License.YES, "hfhub", OnDemand.ITEM, "AI2-THOR objects, the ProcTHOR, iTHOR and RoboTHOR asset set, ranged reads from the ManiSkill copy of the HSSD glTF conversion", listing_ttl_s=None),
     ImporterMeta("openrobotics", "object", "arena_assets", "arena_assets.importers.openrobotics:OpenRobotics", License.YES, "fuel", OnDemand.ITEM, "Open Robotics furniture, appliance, hospital, office and warehouse models from Gazebo Fuel, the CC0 and CC BY 4.0 ones"),
-    ImporterMeta("procthor", "world", "arena_simulation_setup", "arena_simulation_setup.adapters.procthor:ProcTHOR", License.YES, "github", OnDemand.CHUNK, "ProcTHOR-10K houses as worlds of typed rooms, walls, doors and AI2-THOR furniture, split files from GitHub LFS"),
-    ImporterMeta("barn", "world", "arena_simulation_setup", "arena_simulation_setup.adapters.barn:BARNWorld", License.YES, "github", OnDemand.ITEM, "BARN challenge worlds 0 to 299 with the challenge start and goal as scenario, world files from Daffan/the-barn-challenge"),
-    ImporterMeta("houseexpo", "world", "arena_simulation_setup", "arena_simulation_setup.adapters.houseexpo:HouseExpo", License.UNCLEAR, "github", OnDemand.BULK, "HouseExpo floor plans as worlds of labeled rooms and walls, 35k plans in one archive, an MIT repository derived from SUNCG"),
-    ImporterMeta("barn", "suite", "arena_evaluation", "arena_evaluation.adapters.barn:BARN", License.YES, "github", OnDemand.ITEM, "BARN challenge suite with its 300 worlds bundled plus a contest and a report manifest, world files and reference paths from Daffan/the-barn-challenge"),
-    ImporterMeta("socnavbench", "suite", "arena_evaluation", "arena_evaluation.adapters.socnavbench:SocNavBenchSuite", License.UNCLEAR, "github", OnDemand.ITEM, "SocNavBench curated episodes on the ETH and Zara scenes as a suite with a contest and a report manifest"),
-    ImporterMeta(
-        "eth_ucy", "scenario", "task_generator", "task_generator.adapters.eth_ucy:ETHUCY", License.UNCLEAR, "github", OnDemand.ITEM, "ETH and UCY pedestrian sequences (eth, hotel, univ, zara01, zara02) as replay scenarios, each bringing a world of the area its pedestrians walked, SocNavBench's interpolated copies"
-    ),
-    ImporterMeta("socnavbench", "scenario", "task_generator", "task_generator.adapters.socnavbench:SocNavBench", License.UNCLEAR, "github", OnDemand.ITEM, "SocNavBench curated episodes on the ETH and Zara scenes as replay scenarios with a robot start and goal, each bringing the world of its scene"),
-    ImporterMeta("fsd50k", "sound", "arena_simulation_setup", "arena_simulation_setup.adapters.fsd50k:FSD50K", License.YES, "hfhub", OnDemand.ITEM, "FSD50K CC0 and CC BY 3.0 clips as sound items"),
+    ImporterMeta("procthor", "world", "arena_simulation_setup", "arena_simulation_setup.adapters.procthor:ProcTHOR", License.YES, "github", OnDemand.CHUNK, "ProcTHOR-10K houses as worlds of typed rooms, walls, doors and AI2-THOR furniture, split files from GitHub LFS", listing_ttl_s=None),
+    ImporterMeta("barn", "world", "arena_simulation_setup", "arena_simulation_setup.adapters.barn:BARNWorld", License.YES, "github", OnDemand.ITEM, "BARN challenge worlds 0 to 299 with the challenge start and goal as scenario, world files from Daffan/the-barn-challenge", listing_ttl_s=None),
+    ImporterMeta("houseexpo", "world", "arena_simulation_setup", "arena_simulation_setup.adapters.houseexpo:HouseExpo", License.UNCLEAR, "github", OnDemand.BULK, "HouseExpo floor plans as worlds of labeled rooms and walls, 35k plans in one archive, an MIT repository derived from SUNCG", listing_ttl_s=None),
+    ImporterMeta("barn", "suite", "arena_evaluation", "arena_evaluation.adapters.barn:BARN", License.YES, "github", OnDemand.ITEM, "BARN challenge suite with its 300 worlds bundled plus a contest and a report manifest, world files and reference paths from Daffan/the-barn-challenge", listing_ttl_s=None),
+    ImporterMeta("socnavbench", "suite", "arena_evaluation", "arena_evaluation.adapters.socnavbench:SocNavBenchSuite", License.UNCLEAR, "github", OnDemand.ITEM, "SocNavBench curated episodes on the ETH and Zara scenes as a suite with a contest and a report manifest", listing_ttl_s=None),
+    ImporterMeta("eth_ucy", "scenario", "task_generator", "task_generator.adapters.eth_ucy:ETHUCY", License.UNCLEAR, "github", OnDemand.ITEM, "ETH and UCY pedestrian sequences (eth, hotel, univ, zara01, zara02) as replay scenarios in a world of the area walked, SocNavBench's copies", listing_ttl_s=None),
+    ImporterMeta("socnavbench", "scenario", "task_generator", "task_generator.adapters.socnavbench:SocNavBench", License.UNCLEAR, "github", OnDemand.ITEM, "SocNavBench curated episodes on the ETH and Zara scenes as replay scenarios with a robot start and goal, each bringing the world of its scene", listing_ttl_s=None),
+    ImporterMeta("fsd50k", "sound", "arena_simulation_setup", "arena_simulation_setup.adapters.fsd50k:FSD50K", License.YES, "hfhub", OnDemand.ITEM, "FSD50K CC0 and CC BY 3.0 clips as sound items", listing_ttl_s=None),
     ImporterMeta("musohu", "episode", "arena_evaluation", "arena_evaluation.adapters.musohu:MuSoHu", License.YES, "http", OnDemand.ITEM, "MuSoHu rosbag1 human navigation runs as evaluation recorder episodes"),
 ):
     IMPORTERS.register(_meta)
