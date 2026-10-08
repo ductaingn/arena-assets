@@ -41,6 +41,7 @@ def test_registry_lists_importers_by_kind_then_source():
         ("object", "openrobotics"),
         ("scenario", "eth_ucy"),
         ("scenario", "socnavbench"),
+        ("sound", "cmu_arctic"),
         ("sound", "fsd50k"),
         ("suite", "barn"),
         ("suite", "socnavbench"),

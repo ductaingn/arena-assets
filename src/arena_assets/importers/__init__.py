@@ -242,6 +242,7 @@ for _meta in (
     ImporterMeta("eth_ucy", "scenario", "task_generator", "task_generator.adapters.eth_ucy:ETHUCY", License.UNCLEAR, "github", OnDemand.ITEM, "ETH and UCY pedestrian sequences (eth, hotel, univ, zara01, zara02) as replay scenarios in a world of the area walked, SocNavBench's copies", listing_ttl_s=None),
     ImporterMeta("socnavbench", "scenario", "task_generator", "task_generator.adapters.socnavbench:SocNavBench", License.UNCLEAR, "github", OnDemand.ITEM, "SocNavBench curated episodes on the ETH and Zara scenes as replay scenarios with a robot start and goal, each bringing the world of its scene", listing_ttl_s=None),
     ImporterMeta("fsd50k", "sound", "arena_simulation_setup", "arena_simulation_setup.adapters.fsd50k:FSD50K", License.YES, "hfhub", OnDemand.ITEM, "FSD50K CC0 and CC BY 3.0 clips as sound items", listing_ttl_s=None),
+    ImporterMeta("cmu_arctic", "sound", "arena_simulation_setup", "arena_simulation_setup.adapters.cmu_arctic:CMUArctic", License.YES, "http", OnDemand.ITEM, "CMU ARCTIC read-speech utterances of seven speakers as speech sound items", listing_ttl_s=None),
     ImporterMeta("musohu", "episode", "arena_evaluation", "arena_evaluation.adapters.musohu:MuSoHu", License.YES, "http", OnDemand.ITEM, "MuSoHu rosbag1 human navigation runs as evaluation recorder episodes"),
 ):
     IMPORTERS.register(_meta)
