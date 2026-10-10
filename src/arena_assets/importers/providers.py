@@ -203,3 +203,63 @@ class Fuel(Provider):
         for model in self.models():
             if model["name"].startswith(prefix):
                 yield model["name"]
+
+
+class PolyHaven(Provider):
+    name = "polyhaven"
+    _API = "https://api.polyhaven.com"
+    _FILES = "https://dl.polyhaven.org"
+    _AGENT = "arena-assets"
+
+    def __init__(self, api: str = _API, files: str = _FILES):
+        self.api = api.rstrip("/")
+        self.files_host = files.rstrip("/")
+
+    def _request(self, url: str, **kwargs: typing.Any) -> urllib.request.Request:
+        req = super()._request(url, **kwargs)
+        req.add_header("User-Agent", self._AGENT)
+        return req
+
+    def url(self, relpath: str) -> str:
+        """API URL of a relative path, a download URL of the file host as it is."""
+        return relpath if relpath.startswith(f"{self.files_host}/") else f"{self.api}/{urllib.parse.quote(relpath.lstrip('/'))}"
+
+    def assets(self, kind: str = "textures") -> dict[str, dict]:
+        return json.loads(self.read(f"{self.api}/assets?{urllib.parse.urlencode({'t': kind})}")[0])
+
+    def list(self, prefix: str = "") -> Iterator[str]:
+        return (name for name in sorted(self.assets()) if name.startswith(prefix))
+
+
+class AmbientCG(Provider):
+    name = "ambientcg"
+    _HOST = "https://ambientcg.com"
+    _PER_PAGE = 500
+    _AGENT = "arena-assets"
+
+    def __init__(self, host: str = _HOST):
+        self.host = host.rstrip("/")
+
+    def _request(self, url: str, **kwargs: typing.Any) -> urllib.request.Request:
+        req = super()._request(url, **kwargs)
+        req.add_header("User-Agent", self._AGENT)
+        return req
+
+    def url(self, relpath: str) -> str:
+        return f"{self.host}/get?{urllib.parse.urlencode({'file': relpath})}"
+
+    def _query(self, **query: object) -> list[dict]:
+        return json.loads(self.read(f"{self.host}/api/v2/full_json?{urllib.parse.urlencode(query)}")[0])["foundAssets"]
+
+    def asset(self, asset: str) -> dict | None:
+        """API record of one asset with its downloads, None when the host has no asset of that id."""
+        return next(iter(self._query(id=asset, include="downloadData,tagData,displayData")), None)
+
+    def assets(self, kind: str = "Material") -> Iterator[dict]:
+        offset = 0
+        while page := self._query(type=kind, sort="Alphabet", limit=self._PER_PAGE, offset=offset):
+            yield from page
+            offset += len(page)
+
+    def list(self, prefix: str = "") -> Iterator[str]:
+        return (asset["assetId"] for asset in self.assets() if asset["assetId"].startswith(prefix))
