@@ -8,12 +8,13 @@ from pathlib import Path
 import attrs
 import numpy as np
 import yaml
-from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdVol, Vt
+from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdPhysics, UsdVol, Vt
 
 from arena_assets import semantic
 from arena_assets.impl import ANNOTATION_NAME, Face, converter
 from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectAnnotation
 from arena_assets.utils.geom import BoundingBox
+from arena_assets.utils.mesh_io import MeshError, read_mesh
 
 EXTENT_PAD_SCALES = 3.0
 COLLINEAR_RATIO = 1e-6
@@ -117,6 +118,8 @@ class SplatBundle:
     path: Path
     kept: int
     total: int
+    collider_kept: int = 0
+    collider_total: int = 0
 
 
 @attrs.frozen
@@ -267,6 +270,43 @@ def _copy_field(field: _Field, target: Usd.Prim) -> None:
     UsdGeom.Boundable(target).CreateExtentAttr(Vt.Vec3fArray.FromNumpy(extent))
 
 
+def _select_collider(path: Path, to_target: np.ndarray, crop: Crop, drops: list[BoundingBox]) -> tuple[np.ndarray, np.ndarray, int]:
+    """Bundle-frame points and triangles of the mesh part inside the crop and outside the drops, plus the source triangle count."""
+    if not path.is_file():
+        raise SplatError(f"--collider-mesh {path} does not exist, pass an .obj or .ply mesh in the source stage frame")
+    try:
+        points, triangles = read_mesh(path)
+    except MeshError as error:
+        raise SplatError(f"--collider-mesh: {error}") from None
+    target = points @ to_target[:3, :3].T + to_target[:3, 3]
+    keep = _inside(target, crop.bounding_box)[triangles].all(1)
+    for box in drops:
+        keep &= ~_inside(target, box)[triangles].any(1)
+    if not keep.any():
+        raise SplatError(f"the crop keeps 0 of {len(triangles)} collider triangles: the mesh must share the source stage frame of SOURCE ({crop.frame}), and a triangle stays only with all its corners inside the crop and none inside a --drop box")
+    used, kept = np.unique(triangles[keep], return_inverse=True)
+    to_bundle = crop.to_bundle
+    return target[used] @ to_bundle[:3, :3].T + to_bundle[:3, 3], kept.reshape(-1, 3), len(triangles)
+
+
+def _write_collider(path: Path, points: np.ndarray, triangles: np.ndarray) -> None:
+    stage = Usd.Stage.CreateNew(str(path))
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    root = UsdGeom.Xform.Define(stage, "/Collider")
+    stage.SetDefaultPrim(root.GetPrim())
+    UsdGeom.Imageable(root).MakeInvisible()
+    mesh = UsdGeom.Mesh.Define(stage, "/Collider/mesh")
+    mesh.CreatePointsAttr(Vt.Vec3fArray.FromNumpy(points.astype(np.float32)))
+    mesh.CreateFaceVertexCountsAttr(Vt.IntArray.FromNumpy(np.full(len(triangles), 3, np.int32)))
+    mesh.CreateFaceVertexIndicesAttr(Vt.IntArray.FromNumpy(triangles.astype(np.int32).ravel()))
+    mesh.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
+    mesh.CreateExtentAttr(Vt.Vec3fArray.FromNumpy(np.array([points.min(0), points.max(0)], np.float32)))
+    UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
+    UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr(UsdPhysics.Tokens.none)
+    stage.GetRootLayer().Save()
+
+
 def frame_splat(
     source: Path,
     out_dir: Path,
@@ -276,8 +316,9 @@ def frame_splat(
     drops: list[BoundingBox],
     max_scale: float = 0.2,
     min_opacity: float = 0.0,
+    collider: Path | None = None,
 ) -> SplatBundle:
-    """Write <name>.gaussians.usdc and its Z-up wrapper <name>.usda in the bundle frame of the crop."""
+    """Write <name>.gaussians.usdc, the optional <name>.collider.usda and their Z-up wrapper <name>.usda in the bundle frame of the crop."""
     if not Sdf.Path.IsValidIdentifier(name):
         raise SplatError(f"--name {name!r} is not a valid USD prim name (letters, digits and underscores, not starting with a digit), pass --name or rename OUT_DIR")
     if not source.is_file():
@@ -293,6 +334,8 @@ def frame_splat(
         raise SplatError(f"SOURCE {source} has no ParticleField prim with positions, pass a Gaussian splat exported as OpenUSD (3DGRUT with export_usd.enabled=true)")
     if not kept:
         raise SplatError(f"the crop keeps 0 of {total} particles: check the registration ({crop.frame}), then widen --width, --height or --depth, or relax --max-scale and --min-opacity")
+
+    collision = _select_collider(collider, to_target, crop, drops) if collider is not None else None
 
     out_dir.mkdir(parents=True, exist_ok=True)
     gaussians = Usd.Stage.CreateNew(str(out_dir / f"{name}.gaussians.usdc"))
@@ -312,8 +355,15 @@ def frame_splat(
     body = UsdGeom.Xform.Define(wrapper, f"/{name}/splat")
     body.AddTransformOp().Set(Gf.Matrix4d((crop.to_bundle @ to_target).T.tolist()))
     body.GetPrim().GetReferences().AddReference(f"./{name}.gaussians.usdc")
+    collider_path = out_dir / f"{name}.collider.usda"
+    if collision is None:
+        collider_path.unlink(missing_ok=True)
+        wrapper.GetRootLayer().Save()
+        return SplatBundle(path=path, kept=kept, total=total)
+    _write_collider(collider_path, collision[0], collision[1])
+    UsdGeom.Xform.Define(wrapper, f"/{name}/collider").GetPrim().GetReferences().AddReference(f"./{name}.collider.usda")
     wrapper.GetRootLayer().Save()
-    return SplatBundle(path=path, kept=kept, total=total)
+    return SplatBundle(path=path, kept=kept, total=total, collider_kept=len(collision[1]), collider_total=collision[2])
 
 
 def write_annotation(out_dir: Path, name: str, crop: Crop, desc: str, source: str) -> Path:

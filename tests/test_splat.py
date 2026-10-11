@@ -5,7 +5,7 @@ import attrs
 import numpy as np
 import pytest
 import yaml
-from pxr import Gf, Usd, UsdGeom, UsdVol, Vt
+from pxr import Gf, Usd, UsdGeom, UsdPhysics, UsdVol, Vt
 from typer.testing import CliRunner
 
 from arena_assets.__main__ import app
@@ -338,7 +338,7 @@ def test_bare_verb_prints_usage():
 def test_help_documents_every_option():
     result = runner.invoke(app, ["splat", "--help"])
     assert result.exit_code == 0
-    for option in ("--name", "--object", "--matrix", "--points", "--width", "--height", "--floor", "--depth", "--behind", "--drop", "--max-scale", "--min-opacity", "--desc", "--source"):
+    for option in ("--name", "--object", "--collider-mesh", "--matrix", "--points", "--width", "--height", "--floor", "--depth", "--behind", "--drop", "--max-scale", "--min-opacity", "--desc", "--source"):
         assert option in result.output
 
 
@@ -472,3 +472,114 @@ def test_object_with_nonpositive_depth_is_refused(source, tmp_path):
 def test_object_crop_that_keeps_no_particle_names_the_object_frame(source, tmp_path):
     out = tmp_path / "table"
     assert_refused(splat(source.path, out, "--min-opacity", "2", crop=OBJECT_SIZE), out, f"keeps 0 of {COUNT} particles", "the object frame is meters")
+
+
+GRID = np.array([[x, y, z] for x in (-1.8, -0.9, 0.0, 0.9, 1.8) for y in (-0.5, -0.2, 0.02, 0.3) for z in (0.0, 0.5, 1.5, 2.4, 2.9)])
+GRID_TRIANGLES = np.array([[i, i + 1, i + 5] for i in range(len(GRID) - 5)] + [[i, i + 5, i + 20] for i in range(len(GRID) - 20)])
+
+
+@pytest.fixture(scope="module")
+def surface(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    path = tmp_path_factory.mktemp("surface") / "surface.obj"
+    stage_points = apply(np.linalg.inv(TO_WALL), GRID)
+    lines = [f"v {x!r} {y!r} {z!r}" for x, y, z in stage_points.tolist()] + [f"f {a + 1} {b + 1} {c + 1}" for a, b, c in GRID_TRIANGLES.tolist()]
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def kept_triangles(crop: np.ndarray, drop: np.ndarray | None = None) -> np.ndarray:
+    inside = np.all((GRID >= crop[0]) & (GRID <= crop[1]), axis=1)
+    keep = inside[GRID_TRIANGLES].all(1)
+    if drop is not None:
+        keep &= ~np.all((GRID >= drop[0]) & (GRID <= drop[1]), axis=1)[GRID_TRIANGLES].any(1)
+    return GRID_TRIANGLES[keep]
+
+
+def collider_mesh(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    stage = Usd.Stage.Open(str(path))
+    meshes = [prim for prim in stage.Traverse() if prim.IsA(UsdGeom.Mesh)]
+    assert len(meshes) == 1
+    mesh = UsdGeom.Mesh(meshes[0])
+    composed = np.asarray(UsdGeom.Xformable(mesh).ComputeLocalToWorldTransform(Usd.TimeCode.Default())).T
+    assert set(mesh.GetFaceVertexCountsAttr().Get()) == {3}
+    return apply(composed, np.array(mesh.GetPointsAttr().Get(), np.float64)), np.array(mesh.GetFaceVertexIndicesAttr().Get()).reshape(-1, 3)
+
+
+def test_collider_mesh_is_registered_and_cropped_like_the_gaussians(source, surface, tmp_path):
+    out = tmp_path / "lab_wall"
+    result = splat(source.path, out, "--collider-mesh", str(surface))
+    assert result.exit_code == 0, result.output
+    expected = kept_triangles(CROP)
+    assert 0 < len(expected) < len(GRID_TRIANGLES)
+    assert f"collider keeps {len(expected)} of {len(GRID_TRIANGLES)} triangles" in result.output
+    assert sorted(path.name for path in out.iterdir()) == ["annotation.yaml", "lab_wall.collider.usda", "lab_wall.gaussians.usdc", "lab_wall.usda"]
+    points, triangles = collider_mesh(out / "lab_wall.usda")
+    assert len(points) == len(np.unique(expected))
+    np.testing.assert_allclose(points[triangles], GRID[expected] + [0, BEHIND, 0], atol=1e-5)
+
+
+def test_collider_is_an_invisible_static_triangle_mesh(source, surface, tmp_path):
+    out = tmp_path / "lab_wall"
+    assert splat(source.path, out, "--collider-mesh", str(surface)).exit_code == 0
+    stage = Usd.Stage.Open(str(out / "lab_wall.collider.usda"))
+    assert UsdGeom.GetStageUpAxis(stage) == UsdGeom.Tokens.z
+    assert UsdGeom.GetStageMetersPerUnit(stage) == 1.0
+    assert stage.GetDefaultPrim().GetPath() == "/Collider"
+    mesh = stage.GetPrimAtPath("/Collider/mesh")
+    assert mesh.HasAPI(UsdPhysics.CollisionAPI)
+    assert not mesh.HasAPI(UsdPhysics.RigidBodyAPI)
+    assert UsdPhysics.MeshCollisionAPI(mesh).GetApproximationAttr().Get() == UsdPhysics.Tokens.none
+    assert UsdGeom.Imageable(mesh).ComputeVisibility() == UsdGeom.Tokens.invisible
+    wrapper = Usd.Stage.Open(str(out / "lab_wall.usda"))
+    assert wrapper.GetPrimAtPath("/lab_wall/collider/mesh").IsA(UsdGeom.Mesh)
+    assert UsdGeom.Imageable(only_field(wrapper)).ComputeVisibility() == UsdGeom.Tokens.inherited
+
+
+def test_collider_drop_removes_triangles_touching_the_box(source, surface, tmp_path):
+    out = tmp_path / "lab_wall"
+    result = splat(source.path, out, "--collider-mesh", str(surface), "--drop", flat(DROP))
+    assert result.exit_code == 0, result.output
+    expected = kept_triangles(CROP, DROP)
+    assert 0 < len(expected) < len(kept_triangles(CROP))
+    points, triangles = collider_mesh(out / "lab_wall.usda")
+    np.testing.assert_allclose(points[triangles], GRID[expected] + [0, BEHIND, 0], atol=1e-5)
+
+
+def test_object_collider_stays_in_the_object_frame(source, surface, tmp_path):
+    out = tmp_path / "table"
+    result = splat(source.path, out, "--collider-mesh", str(surface), crop=OBJECT_SIZE)
+    assert result.exit_code == 0, result.output
+    expected = kept_triangles(OBJECT_CROP)
+    assert len(expected)
+    points, triangles = collider_mesh(out / "table.usda")
+    np.testing.assert_allclose(points[triangles], GRID[expected], atol=1e-5)
+
+
+def test_bundle_without_collider_mesh_has_no_collider(source, surface, tmp_path):
+    out = tmp_path / "lab_wall"
+    assert splat(source.path, out, "--collider-mesh", str(surface)).exit_code == 0
+    assert (out / "lab_wall.collider.usda").exists()
+    result = splat(source.path, out)
+    assert result.exit_code == 0, result.output
+    assert "collider keeps" not in result.output
+    assert not (out / "lab_wall.collider.usda").exists()
+    wrapper = Usd.Stage.Open(str(out / "lab_wall.usda"))
+    assert not wrapper.GetPrimAtPath("/lab_wall/collider")
+    assert not [prim for prim in wrapper.Traverse() if prim.HasAPI(UsdPhysics.CollisionAPI)]
+
+
+def test_collider_mesh_outside_the_crop_is_refused(source, surface, tmp_path):
+    out = tmp_path / "lab_wall"
+    assert_refused(splat(source.path, out, "--collider-mesh", str(surface), crop=("--width", "3", "--height", "0.45", "--behind", "0.3")), out, f"keeps 0 of {len(GRID_TRIANGLES)} collider triangles", "source stage frame")
+
+
+def test_missing_collider_mesh_is_refused(source, tmp_path):
+    out = tmp_path / "lab_wall"
+    assert_refused(splat(source.path, out, "--collider-mesh", str(tmp_path / "absent.ply")), out, "absent.ply does not exist", ".obj or .ply")
+
+
+def test_collider_mesh_in_an_unknown_format_is_refused(source, tmp_path):
+    mesh = tmp_path / "surface.stl"
+    mesh.write_text("solid")
+    out = tmp_path / "lab_wall"
+    assert_refused(splat(source.path, out, "--collider-mesh", str(mesh)), out, "--collider-mesh", "not one of the mesh formats .obj, .ply")

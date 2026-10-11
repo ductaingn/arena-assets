@@ -8,7 +8,7 @@ from .utils import safe_echo
 
 HELP = """Turn a trained 3D Gaussian splat into an object bundle for Isaac Sim. By default it frames a wall capture that wall kinds place with 'model: NAME'. With --object it frames a free-standing object that worlds and scenarios place like any other object.
 
-SOURCE is a USD file with ParticleField prims, as 3DGRUT writes with export_usd.enabled=true. OUT_DIR receives NAME.gaussians.usdc (the kept Gaussians), NAME.usda (a Z-up wrapper in meters that carries the registration) and annotation.yaml.
+SOURCE is a USD file with ParticleField prims, as 3DGRUT writes with export_usd.enabled=true. OUT_DIR receives NAME.gaussians.usdc (the kept Gaussians), NAME.usda (a Z-up wrapper in meters that carries the registration), annotation.yaml and, with --collider-mesh, NAME.collider.usda.
 
 Target frame (registration, crop and --drop), meters, Z up. Wall frame: origin at the base midpoint of the captured wall, X along the wall, Y facing into the room, Y = 0 on the captured wall plane. Object frame (--object): origin on the floor under the object center, X and Y level, Y toward the object front.
 
@@ -16,14 +16,16 @@ Registration, exactly one of --matrix (a known transform) or --points (fit one f
 
 Crop, in the target frame: X from -width/2 to +width/2 and Z from --floor to --height. Y runs from -behind to --depth for a wall and from -depth/2 to +depth/2 for an object. Anything that should stay must be wholly inside the crop, take the rest out with --drop.
 
-Captured geometry is seen by lidar and depth cameras but has no collision. A wall crop therefore keeps 5 cm in front of the captured wall plane by default and deeper crops are opt-in. An object is visual only: annotation.yaml records the crop as its bounding box, and physics ignores it.
+Captured geometry is seen by lidar and depth cameras but has no collision of its own. A wall crop therefore keeps 5 cm in front of the captured wall plane by default and deeper crops are opt-in. An object is visual only and physics ignores it, annotation.yaml records the crop as its bounding box.
+
+Collision is optional: --collider-mesh takes a triangle mesh of the same capture (.obj or .ply, in the source stage frame, for example a surface reconstructed from the training views). It is registered and cropped like the Gaussians and becomes an invisible static mesh collider in the bundle, so robots stop at it while cameras and lidar keep seeing the splat.
 
 Bundle origin: for a wall, the wall base midpoint at the BACK of the crop, which is the wall frame shifted by +behind along Y. The physical wall of the wall kind sits there, so the whole capture lies in front of it. With --behind B the captured wall surface stands B meters in front of the physical wall. For an object, the object frame origin, so a pose at floor height stands it on the floor.
 
 Next: check the printed counts, then publish with 'arena asset push object NAME'."""
 
 EPILOG = """Examples: arena-assets splat lab.usdz ./Object/lab_wall --points lab_wall.txt --width 3.2 --height 2.5 --drop '-1.6 0 0 -1.1 0.05 0.9'
-arena-assets splat garden.usdz ./Object/garden_table --object --points table.txt --width 1.2 --depth 0.9 --height 1.1"""
+arena-assets splat garden.usdz ./Object/garden_table --object --points table.txt --width 1.2 --depth 0.9 --height 1.1 --collider-mesh garden_surface.ply"""
 
 
 def _fail(message: str) -> typer.Exit:
@@ -49,6 +51,12 @@ def splat_command(
         None, "--behind", help="Wall only: how far behind the captured wall plane kept geometry may reach, in meters (Y min is -behind, default 0 keeps nothing behind it). The bundle is shifted by +behind along Y, so B puts the captured wall surface B meters in front of the physical wall"
     ),
     drop: list[str] = typer.Option([], "--drop", metavar="'6 NUMBERS'", help="Remove the Gaussians inside this target-frame box, 'XMIN YMIN ZMIN XMAX YMAX ZMAX' in meters as one quoted argument. Repeatable. Takes out things the crop would cut in half"),
+    collider_mesh: Path | None = typer.Option(
+        None,
+        "--collider-mesh",
+        metavar="FILE",
+        help="Collision mesh of the capture, an .obj or .ply file in the source stage frame (polygons are split into triangles). A triangle is kept with all its corners inside the crop and none inside a --drop box. Written as NAME.collider.usda, an invisible static collider. Omit it for a bundle without collision",
+    ),
     max_scale: float = typer.Option(0.2, "--max-scale", help="Drop Gaussians whose largest axis exceeds this many meters after registration, they blow up the extent"),
     min_opacity: float = typer.Option(0.0, "--min-opacity", help="Drop Gaussians below this opacity, 0 keeps all and 1 keeps only opaque ones"),
     desc: str | None = typer.Option(None, "--desc", help="Description for annotation.yaml. Defaults to a sentence with the crop size"),
@@ -81,12 +89,14 @@ def splat_command(
             fit = fit_similarity(*read_points(points))
             to_target = fit.matrix
             safe_echo(f"fitted scale {fit.scale:.6g}, RMS residual {fit.rms:.4g} m over {fit.pairs} pairs", ctx)
-        bundle = frame_splat(source, out_dir, name, to_target, crop, drops, max_scale=max_scale, min_opacity=min_opacity)
+        bundle = frame_splat(source, out_dir, name, to_target, crop, drops, max_scale=max_scale, min_opacity=min_opacity, collider=collider_mesh)
     except SplatError as error:
         raise _fail(str(error)) from None
 
     write_annotation(out_dir, name, crop, desc or crop.desc, source_note or source.name)
     safe_echo(f"kept {bundle.kept} of {bundle.total} particles", ctx)
+    if collider_mesh is not None:
+        safe_echo(f"collider keeps {bundle.collider_kept} of {bundle.collider_total} triangles", ctx)
     typer.echo(str(out_dir))
 
 

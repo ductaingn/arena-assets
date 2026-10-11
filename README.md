@@ -120,7 +120,7 @@ All logs and progress bars go to stderr; stdout only carries the results, so out
 
    The bundle origin is the wall base midpoint at the back of the crop: the bundle is the wall frame shifted by `+behind` along Y, and the physical wall of the wall kind sits at its Y = 0, so the whole capture lies in front of that wall. With the default `--behind 0` nothing behind the captured wall plane is kept. With `--behind B` the captured wall surface stands B meters in front of the physical wall, seen by lidar and depth cameras but not solid.
 
-   The bundle holds `<name>.gaussians.usdc` (the kept Gaussians), `<name>.usda` (a Z-up wrapper in meters that carries the registration) and `annotation.yaml`.
+   The bundle holds `<name>.gaussians.usdc` (the kept Gaussians), `<name>.usda` (a Z-up wrapper in meters that carries the registration), `annotation.yaml` and, with `--collider-mesh`, `<name>.collider.usda` (see [Splat colliders](#splat-colliders)).
 4. The rule: anything standing out from the wall must be wholly inside or wholly outside the crop, otherwise its cut parts float. A floor plant whose leaves reached into the crop had to be taken out with `--drop`.
 5. Publish with `arena asset push object <name>`.
 6. Place it in a wall kind:
@@ -161,7 +161,20 @@ static:
     pose: [5.0, 4.0, 0.0]
 ```
 
-The object is visual only. Isaac cameras, lidar and depth cameras see it, physics does not: robots drive through it. The task generator keeps spawns and goals off its bounding box, and humansim receives the box as an obstacle. The capture's lighting is baked in. Isaac only: Gazebo and the other simulators skip it.
+Without a collider the object is visual only. Isaac cameras, lidar and depth cameras see it, physics does not: robots drive through it. The task generator keeps spawns and goals off its bounding box, and humansim receives the box as an obstacle. The capture's lighting is baked in. Isaac only: Gazebo and the other simulators skip it.
+
+#### Splat colliders
+
+`--collider-mesh FILE` gives a wall or object bundle collision. FILE is a triangle mesh of the same capture, `.obj` or `.ply` (ASCII or binary, polygons are split into triangles), in the source stage frame of the export, for example a surface reconstructed from the training views. Building that mesh is outside this tool.
+
+```sh
+arena-assets splat <export>.usdz ./assets/Common/Object/<name> --object --matrix '<16 numbers>' --width 1.2 --depth 1.2 --height 1.1 --collider-mesh <surface>.ply
+```
+
+- The mesh is registered with the same `--matrix` or `--points` as the Gaussians and cropped by the same box. A triangle stays only with all its corners inside the crop and none inside a `--drop` box, and the verb prints how many it keeps.
+- It is written to `<name>.collider.usda` in the bundle frame and referenced from `<name>.usda` as an invisible static triangle-mesh collider (`PhysicsCollisionAPI`, approximation `none`, no rigid body).
+- In Isaac the robot stops at the mesh, while cameras, lidar and depth cameras ignore it and keep seeing the splat.
+- A bundle built without `--collider-mesh` has no `<name>.collider.usda` and no collision.
 
 ## If your materials are missing in the output model
 
