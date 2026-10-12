@@ -8,10 +8,10 @@ from pathlib import Path
 import attrs
 import numpy as np
 import yaml
-from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdPhysics, UsdVol, Vt
+from pxr import Gf, Sdf, Tf, Usd, UsdGeom, UsdVol, Vt
 
 from arena_assets import semantic
-from arena_assets.impl import ANNOTATION_NAME, Face, converter
+from arena_assets.impl import ANNOTATION_NAME, Face, collider, converter
 from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectAnnotation
 from arena_assets.utils.geom import BoundingBox
 from arena_assets.utils.mesh_io import MeshError, read_mesh
@@ -118,6 +118,7 @@ class SplatBundle:
     path: Path
     kept: int
     total: int
+    collider: str = ""
     collider_kept: int = 0
     collider_total: int = 0
 
@@ -143,13 +144,13 @@ def parse_numbers(text: str, count: int, what: str) -> list[float]:
     return values
 
 
-def parse_matrix(text: str) -> np.ndarray:
-    """Parse a row-major 4x4 affine matrix, p_target = matrix @ p_stage."""
-    matrix = np.array(parse_numbers(text, 16, "--matrix (row-major 4x4, source stage frame to the target frame in meters)")).reshape(4, 4)
+def parse_matrix(text: str, frames: str = "the source stage frame to the target frame") -> np.ndarray:
+    """Parse a row-major 4x4 affine matrix that maps between the named frames."""
+    matrix = np.array(parse_numbers(text, 16, f"--matrix (row-major 4x4, {frames} in meters)")).reshape(4, 4)
     if not np.allclose(matrix[3], (0.0, 0.0, 0.0, 1.0)):
-        raise SplatError(f"--matrix must end with the row 0 0 0 1 (row-major, translation in the last column, p_target = M @ p_stage), got {' '.join(f'{value:g}' for value in matrix[3])}: a transposed matrix puts the translation there")
+        raise SplatError(f"--matrix must end with the row 0 0 0 1 (row-major, translation in the last column), got {' '.join(f'{value:g}' for value in matrix[3])}: a transposed matrix puts the translation there")
     if abs(np.linalg.det(matrix[:3, :3])) < 1e-12:
-        raise SplatError("--matrix has a singular 3x3 part, it must hold the rotation and scale from the source stage frame to the target frame")
+        raise SplatError(f"--matrix has a singular 3x3 part, it must hold the rotation and scale from {frames}")
     return matrix
 
 
@@ -289,24 +290,6 @@ def _select_collider(path: Path, to_target: np.ndarray, crop: Crop, drops: list[
     return target[used] @ to_bundle[:3, :3].T + to_bundle[:3, 3], kept.reshape(-1, 3), len(triangles)
 
 
-def _write_collider(path: Path, points: np.ndarray, triangles: np.ndarray) -> None:
-    stage = Usd.Stage.CreateNew(str(path))
-    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
-    root = UsdGeom.Xform.Define(stage, "/Collider")
-    stage.SetDefaultPrim(root.GetPrim())
-    UsdGeom.Imageable(root).MakeInvisible()
-    mesh = UsdGeom.Mesh.Define(stage, "/Collider/mesh")
-    mesh.CreatePointsAttr(Vt.Vec3fArray.FromNumpy(points.astype(np.float32)))
-    mesh.CreateFaceVertexCountsAttr(Vt.IntArray.FromNumpy(np.full(len(triangles), 3, np.int32)))
-    mesh.CreateFaceVertexIndicesAttr(Vt.IntArray.FromNumpy(triangles.astype(np.int32).ravel()))
-    mesh.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
-    mesh.CreateExtentAttr(Vt.Vec3fArray.FromNumpy(np.array([points.min(0), points.max(0)], np.float32)))
-    UsdPhysics.CollisionAPI.Apply(mesh.GetPrim())
-    UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr(UsdPhysics.Tokens.none)
-    stage.GetRootLayer().Save()
-
-
 def frame_splat(
     source: Path,
     out_dir: Path,
@@ -316,9 +299,9 @@ def frame_splat(
     drops: list[BoundingBox],
     max_scale: float = 0.2,
     min_opacity: float = 0.0,
-    collider: Path | None = None,
+    collider_mesh: Path | None = None,
 ) -> SplatBundle:
-    """Write <name>.gaussians.usdc, the optional <name>.collider.usda and their Z-up wrapper <name>.usda in the bundle frame of the crop."""
+    """Write <name>.gaussians.usdc and its Z-up wrapper <name>.usda in the bundle frame of the crop, with the optional collider baked in."""
     if not Sdf.Path.IsValidIdentifier(name):
         raise SplatError(f"--name {name!r} is not a valid USD prim name (letters, digits and underscores, not starting with a digit), pass --name or rename OUT_DIR")
     if not source.is_file():
@@ -335,7 +318,7 @@ def frame_splat(
     if not kept:
         raise SplatError(f"the crop keeps 0 of {total} particles: check the registration ({crop.frame}), then widen --width, --height or --depth, or relax --max-scale and --min-opacity")
 
-    collision = _select_collider(collider, to_target, crop, drops) if collider is not None else None
+    collision = _select_collider(collider_mesh, to_target, crop, drops) if collider_mesh is not None else None
 
     out_dir.mkdir(parents=True, exist_ok=True)
     gaussians = Usd.Stage.CreateNew(str(out_dir / f"{name}.gaussians.usdc"))
@@ -355,18 +338,16 @@ def frame_splat(
     body = UsdGeom.Xform.Define(wrapper, f"/{name}/splat")
     body.AddTransformOp().Set(Gf.Matrix4d((crop.to_bundle @ to_target).T.tolist()))
     body.GetPrim().GetReferences().AddReference(f"./{name}.gaussians.usdc")
-    collider_path = out_dir / f"{name}.collider.usda"
-    if collision is None:
-        collider_path.unlink(missing_ok=True)
-        wrapper.GetRootLayer().Save()
-        return SplatBundle(path=path, kept=kept, total=total)
-    _write_collider(collider_path, collision[0], collision[1])
-    UsdGeom.Xform.Define(wrapper, f"/{name}/collider").GetPrim().GetReferences().AddReference(f"./{name}.collider.usda")
     wrapper.GetRootLayer().Save()
-    return SplatBundle(path=path, kept=kept, total=total, collider_kept=len(collision[1]), collider_total=collision[2])
+    collider.strip(out_dir, name)
+    if collision is None:
+        return SplatBundle(path=path, kept=kept, total=total)
+    collider.collision_only_sdf(out_dir, name)
+    collider.bake(out_dir, name, collision[0], collision[1])
+    return SplatBundle(path=path, kept=kept, total=total, collider=f"{name}{collider.SUFFIX}", collider_kept=len(collision[1]), collider_total=collision[2])
 
 
-def write_annotation(out_dir: Path, name: str, crop: Crop, desc: str, source: str) -> Path:
+def write_annotation(out_dir: Path, name: str, crop: Crop, desc: str, source: str, collider_file: str = "") -> Path:
     """Write the bundle's annotation.yaml with the bundle-frame crop as its bounding box."""
     annotation = ObjectAnnotation(
         name=name,
@@ -376,6 +357,7 @@ def write_annotation(out_dir: Path, name: str, crop: Crop, desc: str, source: st
         asa=semantic.CURRENT_ASA,
         bounding_box=crop.bundle_bounding_box.round(),
         face=Face.POS_Y,
+        collider=collider_file,
     )
     path = out_dir / ANNOTATION_NAME
     with open(path, "w") as f:

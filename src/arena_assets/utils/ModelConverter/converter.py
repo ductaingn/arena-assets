@@ -199,8 +199,12 @@ class ModelConverter:
         else:
             raise ValueError(f"Unsupported file extension: {ext}")
 
-    def rectify(self):
-        """Rectify the model's orientation and position (make it upright and floor-touching)."""
+    def rectify(self) -> np.ndarray:
+        """Rectify the model's orientation and position (make it upright and floor-touching), return the applied 4x4 transform."""
+
+        anchor = next((obj for obj in bpy.context.scene.objects if obj.type == "MESH"), None)
+        bpy.context.view_layer.update()
+        before = anchor.matrix_world.copy() if anchor is not None else None
 
         self.transform_coordinates(CoordinateSystem.default())
         bbox = self.bounding_box()
@@ -229,6 +233,11 @@ class ModelConverter:
             bpy.ops.transform.translate(value=translation)
         finally:
             bpy.ops.object.select_all(action="DESELECT")
+
+        if anchor is None:
+            return np.eye(4)
+        bpy.context.view_layer.update()
+        return np.array(anchor.matrix_world @ before.inverted())
 
     def bounding_box(self) -> BoundingBox:
         coords = []

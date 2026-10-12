@@ -8,7 +8,7 @@ from .utils import safe_echo
 
 HELP = """Turn a trained 3D Gaussian splat into an object bundle for Isaac Sim. By default it frames a wall capture that wall kinds place with 'model: NAME'. With --object it frames a free-standing object that worlds and scenarios place like any other object.
 
-SOURCE is a USD file with ParticleField prims, as 3DGRUT writes with export_usd.enabled=true. OUT_DIR receives NAME.gaussians.usdc (the kept Gaussians), NAME.usda (a Z-up wrapper in meters that carries the registration), annotation.yaml and, with --collider-mesh, NAME.collider.usda.
+SOURCE is a USD file with ParticleField prims, as 3DGRUT writes with export_usd.enabled=true. OUT_DIR receives NAME.gaussians.usdc (the kept Gaussians), NAME.usda (a Z-up wrapper in meters that carries the registration), annotation.yaml and, with --collider-mesh, NAME.collider.obj plus NAME.sdf/ (a collision-only model for Gazebo).
 
 Target frame (registration, crop and --drop), meters, Z up. Wall frame: origin at the base midpoint of the captured wall, X along the wall, Y facing into the room, Y = 0 on the captured wall plane. Object frame (--object): origin on the floor under the object center, X and Y level, Y toward the object front.
 
@@ -18,7 +18,7 @@ Crop, in the target frame: X from -width/2 to +width/2 and Z from --floor to --h
 
 Captured geometry is seen by lidar and depth cameras but has no collision of its own. A wall crop therefore keeps 5 cm in front of the captured wall plane by default and deeper crops are opt-in. An object is visual only and physics ignores it, annotation.yaml records the crop as its bounding box.
 
-Collision is optional: --collider-mesh takes a triangle mesh of the same capture (.obj or .ply, in the source stage frame, for example a surface reconstructed from the training views). It is registered and cropped like the Gaussians and becomes an invisible static mesh collider in the bundle, so robots stop at it while cameras and lidar keep seeing the splat.
+Collision is optional: --collider-mesh takes a triangle mesh of the same capture (.obj or .ply, in the source stage frame, for example a surface reconstructed from the training views). It is registered and cropped like the Gaussians and baked into NAME.usda as an invisible static mesh collider, so in Isaac robots stop at it while cameras and lidar keep seeing the splat. Gazebo gets it through NAME.sdf, which holds only the collision, and annotation.yaml names the plain mesh NAME.collider.obj. 'arena-assets collider' replaces or removes the collider later.
 
 Bundle origin: for a wall, the wall base midpoint at the BACK of the crop, which is the wall frame shifted by +behind along Y. The physical wall of the wall kind sits there, so the whole capture lies in front of it. With --behind B the captured wall surface stands B meters in front of the physical wall. For an object, the object frame origin, so a pose at floor height stands it on the floor.
 
@@ -55,7 +55,7 @@ def splat_command(
         None,
         "--collider-mesh",
         metavar="FILE",
-        help="Collision mesh of the capture, an .obj or .ply file in the source stage frame (polygons are split into triangles). A triangle is kept with all its corners inside the crop and none inside a --drop box. Written as NAME.collider.usda, an invisible static collider. Omit it for a bundle without collision",
+        help="Collision mesh of the capture, an .obj or .ply file in the source stage frame (polygons are split into triangles). A triangle is kept with all its corners inside the crop and none inside a --drop box. Baked into NAME.usda and a collision-only NAME.sdf, kept as NAME.collider.obj and named in annotation.yaml. Omit it for a bundle without collision",
     ),
     max_scale: float = typer.Option(0.2, "--max-scale", help="Drop Gaussians whose largest axis exceeds this many meters after registration, they blow up the extent"),
     min_opacity: float = typer.Option(0.0, "--min-opacity", help="Drop Gaussians below this opacity, 0 keeps all and 1 keeps only opaque ones"),
@@ -89,11 +89,11 @@ def splat_command(
             fit = fit_similarity(*read_points(points))
             to_target = fit.matrix
             safe_echo(f"fitted scale {fit.scale:.6g}, RMS residual {fit.rms:.4g} m over {fit.pairs} pairs", ctx)
-        bundle = frame_splat(source, out_dir, name, to_target, crop, drops, max_scale=max_scale, min_opacity=min_opacity, collider=collider_mesh)
+        bundle = frame_splat(source, out_dir, name, to_target, crop, drops, max_scale=max_scale, min_opacity=min_opacity, collider_mesh=collider_mesh)
     except SplatError as error:
         raise _fail(str(error)) from None
 
-    write_annotation(out_dir, name, crop, desc or crop.desc, source_note or source.name)
+    write_annotation(out_dir, name, crop, desc or crop.desc, source_note or source.name, bundle.collider)
     safe_echo(f"kept {bundle.kept} of {bundle.total} particles", ctx)
     if collider_mesh is not None:
         safe_echo(f"collider keeps {bundle.collider_kept} of {bundle.collider_total} triangles", ctx)

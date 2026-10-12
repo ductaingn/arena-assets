@@ -13,8 +13,9 @@ import attrs
 from cattrs.gen import make_dict_structure_fn, make_dict_unstructure_fn, override
 
 from arena_assets import semantic
-from arena_assets.impl import AssetType, SpatialAnnotation, converter
+from arena_assets.impl import AssetType, SpatialAnnotation, collider, converter
 from arena_assets.utils.logging import get_logger
+from arena_assets.utils.mesh_io import read_mesh
 from arena_assets.utils.ModelConverter import ModelFormat
 from arena_assets.utils.ModelConverter.lights import DEFAULT_CCT_K, SourceLight, SourceMaterial, Vector3, color_temperature, nearest_material
 from arena_assets.utils.ModelConverter.UsdBaker import UsdBaker
@@ -130,18 +131,23 @@ def object_lights(sources: Iterable[SourceLight], materials: Iterable[SourceMate
 @attrs.define
 class ObjectAnnotation(SpatialAnnotation):
     lights: list[ObjectLight] = attrs.field(factory=list, converter=_structure_lights, validator=_unique_names)
+    collider: str = ""
 
     @property
     def as_metadata(self) -> dict:
-        if not self.lights:
-            return super().as_metadata
-        return {**super().as_metadata, "lights": json.dumps(converter.unstructure(self.lights))}
+        metadata = super().as_metadata
+        if self.lights:
+            metadata["lights"] = json.dumps(converter.unstructure(self.lights))
+        if self.collider:
+            metadata["collider"] = self.collider
+        return metadata
 
     @classmethod
     def from_metadata(cls, metadata: dict) -> typing.Self:
         annotation = super().from_metadata(metadata)
         if lights := metadata.get("lights"):
             annotation.lights = json.loads(lights)
+        annotation.collider = metadata.get("collider", "")
         return annotation
 
     @property
@@ -197,7 +203,7 @@ def _structure_light(value: typing.Any, _: type) -> ObjectLight:
 converter.register_structure_hook(ObjectLight, _structure_light)
 converter.register_unstructure_hook(ObjectLight, make_dict_unstructure_fn(ObjectLight, converter, cone_deg=override(omit_if_default=True), glow=override(omit_if_default=True)))
 converter.register_structure_hook(ObjectAnnotation, make_dict_structure_fn(ObjectAnnotation, converter, _cattrs_detailed_validation=False))
-converter.register_unstructure_hook(ObjectAnnotation, make_dict_unstructure_fn(ObjectAnnotation, converter, lights=override(omit_if_default=True)))
+converter.register_unstructure_hook(ObjectAnnotation, make_dict_unstructure_fn(ObjectAnnotation, converter, lights=override(omit_if_default=True), collider=override(omit_if_default=True)))
 
 
 class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
@@ -233,7 +239,7 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
                 )
                 for walk in os.walk(annotation.path)
                 for f in walk[2]
-                if f.endswith(ModelConverter.exts())
+                if f.endswith(ModelConverter.exts()) and os.path.normpath(os.path.join(os.path.relpath(walk[0], annotation.path), f)) != os.path.normpath(annotation.collider or ".")
             ),
             None,
         )
@@ -280,7 +286,7 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
 
             with ModelConverter() as model_converter:
                 model_converter.load(str(input_file))
-                model_converter.rectify()
+                rectified = model_converter.rectify()
                 bounding_box = model_converter.bounding_box().round(4)
                 source_lights = model_converter.lights()
                 model_converter.remove_lights()
@@ -312,6 +318,15 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
                 logger.warning("ModelConverter: %s", line)
 
             annotation.bounding_box = bounding_box
+
+            for usd in collider.usd_models(dest, annotation.name):
+                collider.collide_visuals(usd)
+
+            if annotation.collider:
+                points, triangles = read_mesh(Path(annotation.path) / annotation.collider)
+                baked = collider.bake(dest, annotation.name, points @ rectified[:3, :3].T + rectified[:3, 3], triangles)
+                annotation.collider = f"{annotation.name}{collider.SUFFIX}"
+                logger.info("Baked %d collider triangles of %s into %s", len(triangles), annotation.path, ", ".join(path.name for path in baked))
 
             if annotation.lights:
                 logger.info("Keeping %d annotated lights of %s, skipped extracting %d source lights", len(annotation.lights), annotation.path, len(extracted))

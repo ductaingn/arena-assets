@@ -1,6 +1,8 @@
 import subprocess
 import sys
+from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
 
@@ -14,6 +16,9 @@ BOX_EXTENTS = {
     "Z": ((-0.5, 0.5), (-1.0, 1.0), (0.0, 3.0)),
     "Y": ((-0.5, 0.5), (0.0, 3.0), (-1.0, 1.0)),
 }
+SUNKEN_BOX = ((-0.5, 0.5), (-1.0, 1.0), (-1.0, 2.0))
+HULL = np.array([[-0.4, -0.9, -1.0], [0.4, -0.9, -1.0], [0.0, 0.9, -1.0], [0.0, 0.0, 1.9]])
+HULL_FACES = [[0, 1, 2], [0, 1, 3], [1, 2, 3], [2, 0, 3]]
 OFF_CENTER = "double3 xformOp:translate = (4, 6, 2)\n    uniform token[] xformOpOrder = [\"xformOp:translate\"]"
 EXTRAS = {
     "LIGHT": f"""
@@ -33,8 +38,8 @@ def Xform "Marker"
 }
 
 
-def _usda_box(up_axis, extra=""):
-    xs, ys, zs = BOX_EXTENTS[up_axis]
+def _usda_box(up_axis, extra="", extents=None):
+    xs, ys, zs = extents or BOX_EXTENTS[up_axis]
     points = ", ".join(f"({x}, {y}, {z})" for x in xs for y in ys for z in zs)
     return f"""#usda 1.0
 (
@@ -149,3 +154,71 @@ def test_process_exits_after_gltf_build(tmp_path):
     result = subprocess.run([sys.executable, "-c", GLB_BUILD_SCRIPT, str(tmp_path / "input"), str(tmp_path / "output")], capture_output=True, text=True, timeout=120)
 
     assert result.returncode == 0, result.stderr
+
+
+def test_build_bakes_the_declared_collider_rectified_with_the_model(tmp_path):
+    pytest.importorskip("bpy")
+    import xml.etree.ElementTree as ET
+
+    from pxr import Usd, UsdGeom, UsdPhysics
+
+    from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectDatabaseBuilder
+    from arena_assets.utils.mesh_io import read_mesh
+
+    source = tmp_path / "input" / "Object" / "box"
+    source.mkdir(parents=True)
+    (source / "box.usda").write_text(_usda_box("Z", extents=SUNKEN_BOX))
+    (source / "hull.obj").write_text("\n".join([*(f"v {x} {y} {z}" for x, y, z in HULL), *(f"f {a + 1} {b + 1} {c + 1}" for a, b, c in HULL_FACES)]) + "\n")
+    (source / ANNOTATION_NAME).write_text(yaml.safe_dump({"desc": "box", "collider": "hull.obj"}))
+
+    builder = ObjectDatabaseBuilder(tmp_path / "input", tmp_path / "output")
+    builder.enable("formats", "usdz,sdf")
+    dest = tmp_path / "output" / "Object" / "box"
+    dest.mkdir(parents=True)
+    annotation = builder.read_annotation_file(source)
+    assert Path(ObjectDatabaseBuilder.find_mainfile(annotation)) == Path("box.usda")
+    built = builder.process_entity(annotation, dest)
+
+    assert built is not None
+    assert built.bounding_box == UPRIGHT_BOX
+    assert built.collider == "box.collider.obj"
+    lifted = HULL + (0.0, 0.0, 1.0)
+    np.testing.assert_allclose(read_mesh(dest / "box.collider.obj")[0], lifted, atol=1e-5)
+
+    stage = Usd.Stage.Open(str(dest / "box.usdz"))
+    visuals = [prim for prim in Usd.PrimRange(stage.GetDefaultPrim()) if prim.IsA(UsdGeom.Mesh) and prim.GetName() != "mesh"]
+    assert visuals
+    assert all(UsdPhysics.CollisionAPI(prim).GetCollisionEnabledAttr().Get() is False for prim in visuals)
+    mesh = UsdGeom.Mesh(stage.GetDefaultPrim().GetChild("collider").GetChild("mesh"))
+    world = np.asarray(mesh.ComputeLocalToWorldTransform(Usd.TimeCode.Default())).T
+    points = np.array(mesh.GetPointsAttr().Get(), np.float64) @ world[:3, :3].T + world[:3, 3]
+    assert (UsdGeom.GetStageUpAxis(stage), UsdGeom.GetStageMetersPerUnit(stage)) == (UsdGeom.Tokens.z, 1.0)
+    np.testing.assert_allclose(points, lifted, atol=1e-4)
+
+    link = ET.parse(dest / "box.sdf" / "box.sdf").getroot().find("./model/link")
+    assert [(collision.get("name"), collision.findtext("./geometry/mesh/uri")) for collision in link.findall("collision")] == [("collider", "box.collider.obj")]
+    assert [visual.findtext("./geometry/mesh/uri") for visual in link.findall("visual")] == ["box.dae"]
+
+
+def test_build_gives_usd_visual_meshes_collision(tmp_path):
+    pytest.importorskip("bpy")
+    from pxr import Usd, UsdGeom, UsdPhysics
+
+    from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectDatabaseBuilder
+
+    _write_box_source(tmp_path / "input" / "Object" / "box")
+    builder = ObjectDatabaseBuilder(tmp_path / "input", tmp_path / "output")
+    builder.enable("formats", "usdz")
+    dest = tmp_path / "output" / "Object" / "box"
+    dest.mkdir(parents=True)
+    built = builder.process_entity(builder.read_annotation_file(tmp_path / "input" / "Object" / "box"), dest)
+
+    assert built is not None
+    assert built.collider == ""
+    stage = Usd.Stage.Open(str(dest / "box.usdz"))
+    meshes = [prim for prim in Usd.PrimRange(stage.GetDefaultPrim()) if prim.IsA(UsdGeom.Mesh)]
+    assert meshes
+    for prim in meshes:
+        assert prim.HasAPI(UsdPhysics.CollisionAPI)
+        assert not prim.HasAPI(UsdPhysics.RigidBodyAPI)
+        assert UsdPhysics.MeshCollisionAPI(prim).GetApproximationAttr().Get() == UsdPhysics.Tokens.none

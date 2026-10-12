@@ -120,7 +120,7 @@ All logs and progress bars go to stderr; stdout only carries the results, so out
 
    The bundle origin is the wall base midpoint at the back of the crop: the bundle is the wall frame shifted by `+behind` along Y, and the physical wall of the wall kind sits at its Y = 0, so the whole capture lies in front of that wall. With the default `--behind 0` nothing behind the captured wall plane is kept. With `--behind B` the captured wall surface stands B meters in front of the physical wall, seen by lidar and depth cameras but not solid.
 
-   The bundle holds `<name>.gaussians.usdc` (the kept Gaussians), `<name>.usda` (a Z-up wrapper in meters that carries the registration), `annotation.yaml` and, with `--collider-mesh`, `<name>.collider.usda` (see [Splat colliders](#splat-colliders)).
+   The bundle holds `<name>.gaussians.usdc` (the kept Gaussians), `<name>.usda` (a Z-up wrapper in meters that carries the registration), `annotation.yaml` and, with `--collider-mesh`, the collider (see [Splat colliders](#splat-colliders)).
 4. The rule: anything standing out from the wall must be wholly inside or wholly outside the crop, otherwise its cut parts float. A floor plant whose leaves reached into the crop had to be taken out with `--drop`.
 5. Publish with `arena asset push object <name>`.
 6. Place it in a wall kind:
@@ -165,16 +165,29 @@ Without a collider the object is visual only. Isaac cameras, lidar and depth cam
 
 #### Splat colliders
 
-`--collider-mesh FILE` gives a wall or object bundle collision. FILE is a triangle mesh of the same capture, `.obj` or `.ply` (ASCII or binary, polygons are split into triangles), in the source stage frame of the export, for example a surface reconstructed from the training views. Building that mesh is outside this tool.
+`--collider-mesh FILE` gives a splat bundle a collider at build time. FILE is a triangle mesh of the same capture, `.obj` or `.ply`, in the source stage frame of the export, for example a surface reconstructed from the training views. Building that mesh is outside this tool. It is registered with the same `--matrix` or `--points` as the Gaussians and cropped by the same box: a triangle stays only with all its corners inside the crop and none inside a `--drop` box, and the verb prints how many it keeps. The kept triangles are baked into `<name>.usda` as described under [Colliders](#colliders). The bundle has no SDF of its own, so the verb also writes `<name>.sdf/<name>.sdf` holding only the collision: Gazebo then has the obstacle without the capture.
+
+### Colliders
+
+An object's `annotation.yaml` may name a collider mesh under `collider:`. It replaces the object's collision in every model the bundle holds, while cameras, lidar and depth cameras keep seeing the visual model:
+
+- USD (`<name>.usdz`, `.usd`, `.usda` or `.usdc`): an invisible static triangle-mesh collider `collider/mesh` under the default prim, with the collision of the visual meshes switched off (`physics:collisionEnabled = false`). Without one, the build gives every visual mesh a static triangle-mesh collision, as the SDF has.
+- SDF (`<name>.sdf/<name>.sdf`): the only `<collision>`, named `collider`, with the mesh `<name>.collider.obj` next to the SDF. An SDF without one collides with its visual meshes.
+- The mesh itself stays in the bundle as `<name>.collider.obj`, which the built annotation names.
+
+In a build dataset, `collider:` names an `.obj` or `.ply` triangle mesh in the object's source directory, in the frame of the source model in meters, Z up. The build moves the mesh with the model when it stands the model upright on the floor, then bakes it into every exported format.
+
+`arena-assets collider BUNDLE MESH` does the same for a built bundle directory, for example a pulled object or a world-local copy:
 
 ```sh
-arena-assets splat <export>.usdz ./assets/Common/Object/<name> --object --matrix '<16 numbers>' --width 1.2 --depth 1.2 --height 1.1 --collider-mesh <surface>.ply
+arena-assets collider ./assets/Common/Object/<name> <hull>.obj
+arena-assets collider ./assets/Common/Object/<name> --remove
 ```
 
-- The mesh is registered with the same `--matrix` or `--points` as the Gaussians and cropped by the same box. A triangle stays only with all its corners inside the crop and none inside a `--drop` box, and the verb prints how many it keeps.
-- It is written to `<name>.collider.usda` in the bundle frame and referenced from `<name>.usda` as an invisible static triangle-mesh collider (`PhysicsCollisionAPI`, approximation `none`, no rigid body).
-- In Isaac the robot stops at the mesh, while cameras, lidar and depth cameras ignore it and keep seeing the splat.
-- A bundle built without `--collider-mesh` has no `<name>.collider.usda` and no collision.
+- MESH is an `.obj` or `.ply` triangle mesh (ASCII or binary, polygons are split into triangles) in the bundle frame, the frame of the bundle's models in meters, Z up. `--matrix` maps a mesh from another frame into it.
+- It bakes into the models present in the directory and prints them. A bundle pulled with only some formats gets the collider only in those.
+- Running it again replaces the collider. `--remove` takes it out of the models, which then collide as they were built, and deletes `<name>.collider.obj` and the annotation entry.
+- `arena asset push object <name>` publishes the changed models with the bundle.
 
 ## If your materials are missing in the output model
 

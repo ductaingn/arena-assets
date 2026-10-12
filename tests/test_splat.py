@@ -1,4 +1,5 @@
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import attrs
@@ -9,6 +10,7 @@ from pxr import Gf, Usd, UsdGeom, UsdPhysics, UsdVol, Vt
 from typer.testing import CliRunner
 
 from arena_assets.__main__ import app
+from arena_assets.utils.mesh_io import read_mesh
 
 runner = CliRunner()
 
@@ -512,27 +514,29 @@ def test_collider_mesh_is_registered_and_cropped_like_the_gaussians(source, surf
     expected = kept_triangles(CROP)
     assert 0 < len(expected) < len(GRID_TRIANGLES)
     assert f"collider keeps {len(expected)} of {len(GRID_TRIANGLES)} triangles" in result.output
-    assert sorted(path.name for path in out.iterdir()) == ["annotation.yaml", "lab_wall.collider.usda", "lab_wall.gaussians.usdc", "lab_wall.usda"]
+    assert sorted(path.name for path in out.iterdir()) == ["annotation.yaml", "lab_wall.collider.obj", "lab_wall.gaussians.usdc", "lab_wall.sdf", "lab_wall.usda"]
     points, triangles = collider_mesh(out / "lab_wall.usda")
     assert len(points) == len(np.unique(expected))
     np.testing.assert_allclose(points[triangles], GRID[expected] + [0, BEHIND, 0], atol=1e-5)
+    for obj in (out / "lab_wall.collider.obj", out / "lab_wall.sdf" / "lab_wall.collider.obj"):
+        obj_points, obj_triangles = read_mesh(obj)
+        np.testing.assert_allclose(obj_points[obj_triangles], GRID[expected] + [0, BEHIND, 0], atol=1e-5)
 
 
 def test_collider_is_an_invisible_static_triangle_mesh(source, surface, tmp_path):
     out = tmp_path / "lab_wall"
     assert splat(source.path, out, "--collider-mesh", str(surface)).exit_code == 0
-    stage = Usd.Stage.Open(str(out / "lab_wall.collider.usda"))
-    assert UsdGeom.GetStageUpAxis(stage) == UsdGeom.Tokens.z
-    assert UsdGeom.GetStageMetersPerUnit(stage) == 1.0
-    assert stage.GetDefaultPrim().GetPath() == "/Collider"
-    mesh = stage.GetPrimAtPath("/Collider/mesh")
+    wrapper = Usd.Stage.Open(str(out / "lab_wall.usda"))
+    mesh = wrapper.GetPrimAtPath("/lab_wall/collider/mesh")
     assert mesh.HasAPI(UsdPhysics.CollisionAPI)
     assert not mesh.HasAPI(UsdPhysics.RigidBodyAPI)
     assert UsdPhysics.MeshCollisionAPI(mesh).GetApproximationAttr().Get() == UsdPhysics.Tokens.none
     assert UsdGeom.Imageable(mesh).ComputeVisibility() == UsdGeom.Tokens.invisible
-    wrapper = Usd.Stage.Open(str(out / "lab_wall.usda"))
-    assert wrapper.GetPrimAtPath("/lab_wall/collider/mesh").IsA(UsdGeom.Mesh)
     assert UsdGeom.Imageable(only_field(wrapper)).ComputeVisibility() == UsdGeom.Tokens.inherited
+    assert yaml.safe_load((out / "annotation.yaml").read_text())["collider"] == "lab_wall.collider.obj"
+    link = ET.parse(out / "lab_wall.sdf" / "lab_wall.sdf").getroot().find("./model/link")
+    assert link.findall("visual") == []
+    assert [(collision.get("name"), collision.findtext("./geometry/mesh/uri")) for collision in link.findall("collision")] == [("collider", "lab_wall.collider.obj")]
 
 
 def test_collider_drop_removes_triangles_touching_the_box(source, surface, tmp_path):
@@ -558,13 +562,13 @@ def test_object_collider_stays_in_the_object_frame(source, surface, tmp_path):
 def test_bundle_without_collider_mesh_has_no_collider(source, surface, tmp_path):
     out = tmp_path / "lab_wall"
     assert splat(source.path, out, "--collider-mesh", str(surface)).exit_code == 0
-    assert (out / "lab_wall.collider.usda").exists()
+    assert (out / "lab_wall.collider.obj").exists()
     result = splat(source.path, out)
     assert result.exit_code == 0, result.output
     assert "collider keeps" not in result.output
-    assert not (out / "lab_wall.collider.usda").exists()
+    assert sorted(path.name for path in out.iterdir()) == ["annotation.yaml", "lab_wall.gaussians.usdc", "lab_wall.usda"]
+    assert "collider" not in yaml.safe_load((out / "annotation.yaml").read_text())
     wrapper = Usd.Stage.Open(str(out / "lab_wall.usda"))
-    assert not wrapper.GetPrimAtPath("/lab_wall/collider")
     assert not [prim for prim in wrapper.Traverse() if prim.HasAPI(UsdPhysics.CollisionAPI)]
 
 
