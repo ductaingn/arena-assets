@@ -152,13 +152,11 @@ arena-assets splat <export>.usdz ./assets/Common/Object/<name> --object --matrix
 - The crop keeps X within `--width`, Y within `--depth` (required), both centered on the origin, and Z from `--floor` (default 0.03, which cuts the captured floor away) to `--height`. `--behind` applies to walls only.
 - The bundle origin is the object frame origin, so a pose at floor height stands the object on the floor, and `annotation.yaml` records the crop as the bounding box.
 
-Place it as a static entry in a world zone's `entities:` or a scenario's `static:` list:
+Place it like any other object, in a world level's or a scenario's `objects:` list:
 
 ```yaml
-static:
-  - name: garden_table
-    model: <name>
-    pose: [5.0, 4.0, 0.0]
+objects:
+  - {name: garden_table, model: <name>, pose: [5.0, 4.0, 0.0]}
 ```
 
 Without a collider the object is visual only. Isaac cameras, lidar and depth cameras see it, physics does not: robots drive through it. The task generator keeps spawns and goals off its bounding box, and humansim receives the box as an obstacle. The capture's lighting is baked in. Isaac only: Gazebo and the other simulators skip it.
