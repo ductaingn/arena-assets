@@ -19,7 +19,13 @@ from arena_assets.utils.geom import BoundingBox
 from arena_assets.utils.ModelConverter import sdf_model
 from arena_assets.utils.ModelConverter.lights import SourceLight, SourceMaterial, color_temperature, nearest_material
 
-BULB = {"fixture": "bulb", "offset": [0.0, 0.0, 1.5], "lumens": 800.0}
+BULB = {"fixture": "bulb", "pose": [[0.0, 0.0, 1.5], [1.0, 0.0, 0.0, 0.0]], "lumens": 800.0}
+
+
+def emission(light):
+    """Unit vector a light emits along: the local -z axis of its pose quaternion."""
+    w, x, y, z = light.pose[1]
+    return (-2.0 * (x * z + w * y), -2.0 * (y * z - w * x), -(1.0 - 2.0 * (x * x + y * y)))
 
 
 def structure(*lights):
@@ -37,19 +43,17 @@ def source(**fields):
             "power": 10.0,
             "color": (1.0, 1.0, 1.0),
             "location": (0.0, 0.0, 2.0),
-            "direction": (0.0, 0.0, -1.0),
             **fields,
         }
     )
 
 
-def test_light_defaults_fill_name_direction_and_cct():
+def test_light_defaults_fill_name_and_cct():
     (light,) = structure(BULB).lights
     assert light == ObjectLight(
         name="light",
         fixture=LightFixture.BULB,
-        offset=(0.0, 0.0, 1.5),
-        direction=(0.0, 0.0, -1.0),
+        pose=((0.0, 0.0, 1.5), (1.0, 0.0, 0.0, 0.0)),
         lumens=800.0,
         cct_K=6500.0,
         cone_deg=None,
@@ -61,8 +65,7 @@ def test_light_structures_every_field():
         {
             "name": "reading_1",
             "fixture": "spot",
-            "offset": [1, 2, 3],
-            "direction": [0, 1, 0],
+            "pose": [[1, 2, 3], [0, 1.5708, 0]],
             "lumens": 450,
             "cct_K": 2700,
             "cone_deg": 60,
@@ -70,8 +73,7 @@ def test_light_structures_every_field():
     ).lights
     assert light.name == "reading_1"
     assert light.fixture is LightFixture.SPOT
-    assert light.offset == (1.0, 2.0, 3.0)
-    assert light.direction == (0.0, 1.0, 0.0)
+    assert light.pose == ((1.0, 2.0, 3.0), (0.0, 1.5708, 0.0))
     assert light.lumens == 450.0
     assert light.cct_K == 2700.0
     assert light.cone_deg == 60.0
@@ -101,11 +103,11 @@ def test_annotation_yaml_without_lights_has_no_lights_key():
 
 
 def test_lights_roundtrip_through_yaml():
-    annotation = structure(BULB, {"name": "reading", "fixture": "spot", "offset": [0.2, 0.0, 1.0], "lumens": 300.0, "cone_deg": 45.0})
+    annotation = structure(BULB, {"name": "reading", "fixture": "spot", "pose": [[0.2, 0.0, 1.0], [0.0, -0.7854, 0.0]], "lumens": 300.0, "cone_deg": 45.0})
     data = yaml.safe_load(yaml.safe_dump(converter.unstructure(annotation)))
     assert data["lights"] == [
-        {"name": "light", "fixture": "bulb", "offset": [0.0, 0.0, 1.5], "direction": [0.0, 0.0, -1.0], "lumens": 800.0, "cct_K": 6500.0},
-        {"name": "reading", "fixture": "spot", "offset": [0.2, 0.0, 1.0], "direction": [0.0, 0.0, -1.0], "lumens": 300.0, "cct_K": 6500.0, "cone_deg": 45.0},
+        {"name": "light", "fixture": "bulb", "pose": [[0.0, 0.0, 1.5], [1.0, 0.0, 0.0, 0.0]], "lumens": 800.0, "cct_K": 6500.0},
+        {"name": "reading", "fixture": "spot", "pose": [[0.2, 0.0, 1.0], [0.0, -0.7854, 0.0]], "lumens": 300.0, "cct_K": 6500.0, "cone_deg": 45.0},
     ]
     assert converter.structure(data, ObjectAnnotation) == annotation
 
@@ -121,7 +123,7 @@ def test_glow_roundtrips_through_yaml_and_metadata():
 
 
 def test_lights_roundtrip_through_metadata():
-    annotation = structure({**BULB, "cct_K": 3000.0}, {"name": "spot", "fixture": "spot", "offset": [0, 0, 1], "lumens": 10, "cone_deg": 30})
+    annotation = structure({**BULB, "cct_K": 3000.0}, {"name": "spot", "fixture": "spot", "pose": [[0, 0, 1], [0, 0, 0]], "lumens": 10, "cone_deg": 30})
     metadata = annotation.as_metadata
     assert json.loads(metadata["lights"])[0]["cct_K"] == 3000.0
     assert ObjectAnnotation.from_metadata(metadata) == annotation
@@ -140,12 +142,14 @@ def test_metadata_without_lights_has_no_lights_column():
         {**BULB, "lumens": 0.0},
         {**BULB, "lumens": -5.0},
         {**BULB, "cct_K": 0.0},
-        {**BULB, "direction": [0.0, 0.0, 0.0]},
-        {**BULB, "direction": [0.0, 1.0]},
-        {**BULB, "offset": [0.0, 0.0, 1.0, 2.0]},
+        {**BULB, "pose": [[0.0, 0.0, 1.5], [0.0, 0.0, 0.0, 0.0]]},
+        {**BULB, "pose": [[0.0, 0.0, 1.5], [0.0, 1.0]]},
+        {**BULB, "pose": [[0.0, 0.0, 1.0, 2.0], [1.0, 0.0, 0.0, 0.0]]},
+        {**BULB, "pose": [0.0, 0.0, 1.5]},
         {**BULB, "cone_deg": 0.0},
         {**BULB, "cone_deg": 180.0},
-        {"offset": [0.0, 0.0, 1.0], "lumens": 800.0},
+        {"pose": [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.0]], "lumens": 800.0},
+        {"fixture": "bulb", "lumens": 800.0},
     ],
     ids=[
         "unknown_fixture",
@@ -154,12 +158,14 @@ def test_metadata_without_lights_has_no_lights_column():
         "zero_lumens",
         "negative_lumens",
         "zero_cct",
-        "zero_direction",
-        "short_direction",
-        "long_offset",
+        "zero_quaternion",
+        "short_orientation",
+        "long_position",
+        "flat_pose",
         "zero_cone",
         "straight_cone",
         "missing_fixture",
+        "missing_pose",
     ],
 )
 def test_invalid_light_raises_value_error(entry):
@@ -169,7 +175,7 @@ def test_invalid_light_raises_value_error(entry):
 
 def test_duplicate_light_names_raise_value_error():
     with pytest.raises(ValueError, match="light"):
-        structure(BULB, {**BULB, "offset": [0.0, 0.0, 0.5]})
+        structure(BULB, {**BULB, "pose": [[0.0, 0.0, 0.5], [1.0, 0.0, 0.0, 0.0]]})
 
 
 @pytest.mark.parametrize(
@@ -221,14 +227,22 @@ def test_lights_are_named_in_source_name_order():
             source(name="b", location=(0.0, 0.0, 2.0)),
         ]
     )
-    assert [(light.name, light.offset[2]) for light in lights] == [("light", 1.0), ("light_1", 2.0), ("light_2", 3.0)]
+    assert [(light.name, light.pose[0][2]) for light in lights] == [("light", 1.0), ("light_1", 2.0), ("light_2", 3.0)]
 
 
-def test_direction_is_normalized_and_offset_rounded():
-    (light,) = object_lights([source(location=(0.123456, -0.00001, 2.0), direction=(0.0, 3.0, -4.0))])
-    assert light.direction == (0.0, 0.6, -0.8)
-    assert light.offset == (0.1235, 0.0, 2.0)
-    assert math.copysign(1.0, light.offset[1]) == 1.0
+def test_pose_keeps_the_light_rotation_and_rounds_its_position():
+    tilt = math.atan2(3.0, 4.0)
+    rotation = (math.cos(tilt / 2), math.sin(tilt / 2), 0.0, 0.0)
+    (light,) = object_lights([source(type="SPOT", spot_size=1.0, location=(0.123456, -0.00001, 2.0), rotation=rotation)])
+    assert light.pose[0] == (0.1235, 0.0, 2.0)
+    assert math.copysign(1.0, light.pose[0][1]) == 1.0
+    assert light.pose[1] == pytest.approx(rotation, abs=1e-6)
+    assert emission(light) == pytest.approx((0.0, 0.6, -0.8), abs=1e-5)
+
+
+def test_bulb_pose_drops_the_light_rotation():
+    (light,) = object_lights([source(rotation=(0.0, 1.0, 0.0, 0.0))])
+    assert light.pose == ((0.0, 0.0, 2.0), (1.0, 0.0, 0.0, 0.0))
 
 
 def test_white_color_is_daylight():
@@ -447,14 +461,14 @@ def test_build_extracts_source_lights_and_strips_them_from_every_model(tmp_path,
     assert [light.name for light in built.lights] == ["light", "light_1"]
     bulb, spot = built.lights
     assert bulb.fixture is LightFixture.BULB
-    assert bulb.offset == pytest.approx((0.0, 0.0, 2.0), abs=1e-3)
-    assert bulb.direction == pytest.approx((0.0, 0.0, -1.0), abs=1e-3)
+    assert bulb.pose[0] == pytest.approx((0.0, 0.0, 2.0), abs=1e-3)
+    assert emission(bulb) == pytest.approx((0.0, 0.0, -1.0), abs=1e-3)
     assert bulb.lumens == pytest.approx(6830.0, rel=1e-3)
     assert bulb.cct_K == pytest.approx(6500.0, abs=10.0)
     assert bulb.cone_deg is None
     assert spot.fixture is LightFixture.SPOT
-    assert spot.offset == pytest.approx((0.5, 0.0, 1.5), abs=1e-3)
-    assert spot.direction == pytest.approx((0.0, 0.5, -0.866), abs=1e-3)
+    assert spot.pose[0] == pytest.approx((0.5, 0.0, 1.5), abs=1e-3)
+    assert emission(spot) == pytest.approx((0.0, 0.5, -0.866), abs=1e-3)
     assert spot.lumens == pytest.approx(3415.0, rel=1e-3)
     assert spot.cct_K < 4000.0
     assert spot.cone_deg == pytest.approx(60.0, abs=0.1)
@@ -472,7 +486,7 @@ def test_build_extracts_source_lights_and_strips_them_from_every_model(tmp_path,
 def test_build_keeps_annotated_lights_over_source_lights(tmp_path):
     pytest.importorskip("bpy")
 
-    annotated = {"name": "shade", "fixture": "downlight", "offset": [0.0, 0.0, 1.8], "lumens": 900.0, "cct_K": 2700.0}
+    annotated = {"name": "shade", "fixture": "downlight", "pose": [[0.0, 0.0, 1.8], [1.0, 0.0, 0.0, 0.0]], "lumens": 900.0, "cct_K": 2700.0}
     built, dest = _process_lamp(tmp_path, {"desc": "floor lamp", "lights": [annotated]})
 
     assert built.lights == [converter.structure(annotated, ObjectLight)]
@@ -572,7 +586,7 @@ def test_build_clears_glow_emission_in_every_model(tmp_path):
 def test_build_glows_only_annotated_material(tmp_path):
     pytest.importorskip("bpy")
 
-    annotated = {"name": "shade", "fixture": "bulb", "offset": [0.0, 0.0, 1.2], "lumens": 900.0, "glow": "Shade"}
+    annotated = {"name": "shade", "fixture": "bulb", "pose": [[0.0, 0.0, 1.2], [1.0, 0.0, 0.0, 0.0]], "lumens": 900.0, "glow": "Shade"}
     built, dest = _process_lamp(tmp_path, {"desc": "floor lamp", "lights": [annotated]}, GLOW_LAMP_SOURCE_SCRIPT)
     sdf = dest / "lamp.sdf"
 
@@ -647,7 +661,7 @@ def test_sdf_of_fully_glowing_model_has_only_glow_visual(tmp_path):
 def test_build_fails_on_annotated_glow_naming_missing_material(tmp_path, caplog):
     pytest.importorskip("bpy")
 
-    annotated = {"fixture": "bulb", "offset": [0.0, 0.0, 1.2], "lumens": 900.0, "glow": "Glass"}
+    annotated = {"fixture": "bulb", "pose": [[0.0, 0.0, 1.2], [1.0, 0.0, 0.0, 0.0]], "lumens": 900.0, "glow": "Glass"}
     with caplog.at_level(logging.ERROR):
         built, dest = _build_lamp(tmp_path, {"desc": "floor lamp", "lights": [annotated]}, GLOW_LAMP_SOURCE_SCRIPT)
 

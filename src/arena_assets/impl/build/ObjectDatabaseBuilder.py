@@ -17,7 +17,7 @@ from arena_assets.impl import AssetType, SpatialAnnotation, collider, converter
 from arena_assets.utils.logging import get_logger
 from arena_assets.utils.mesh_io import read_mesh
 from arena_assets.utils.ModelConverter import ModelFormat
-from arena_assets.utils.ModelConverter.lights import DEFAULT_CCT_K, SourceLight, SourceMaterial, Vector3, color_temperature, nearest_material
+from arena_assets.utils.ModelConverter.lights import DEFAULT_CCT_K, Quaternion, SourceLight, SourceMaterial, Vector3, color_temperature, nearest_material
 from arena_assets.utils.ModelConverter.UsdBaker import UsdBaker
 
 from . import DatabaseBuilder, OptionRegistry
@@ -36,19 +36,21 @@ class LightFixture(enum.StrEnum):
     TUBE = "tube"
 
 
-def _vector(value: Iterable[float]) -> Vector3:
-    x, y, z = (float(component) for component in value)
-    return (x, y, z)
+LightPose = tuple[Vector3, Vector3 | Quaternion]
+
+
+def _pose(value: Iterable[Iterable[float]]) -> LightPose:
+    position, orientation = (tuple(float(component) for component in part) for part in value)
+    if len(position) != 3 or len(orientation) not in (3, 4):
+        raise ValueError(f"pose must be [[x, y, z], [roll, pitch, yaw]] or [[x, y, z], [w, x, y, z]], got {value}")
+    if len(orientation) == 4 and not math.isclose(math.hypot(*orientation), 1.0, abs_tol=1e-3):
+        raise ValueError(f"pose orientation {orientation} is no unit quaternion")
+    return (position, orientation)
 
 
 def _positive(instance: object, attribute: attrs.Attribute, value: float) -> None:
     if not value > 0.0:
         raise ValueError(f"{attribute.name} must be > 0, got {value}")
-
-
-def _nonzero(instance: object, attribute: attrs.Attribute, value: Vector3) -> None:
-    if not any(value):
-        raise ValueError(f"{attribute.name} must be nonzero, got {value}")
 
 
 def _cone(instance: object, attribute: attrs.Attribute, value: float) -> None:
@@ -58,12 +60,11 @@ def _cone(instance: object, attribute: attrs.Attribute, value: float) -> None:
 
 @attrs.define(kw_only=True)
 class ObjectLight:
-    """Light fixture carried by an object, in the frame of the built model."""
+    """Light fixture carried by an object, its pose in the frame of the built model, emitting along the local -z axis of that pose."""
 
     name: str = attrs.field(default="light", validator=attrs.validators.matches_re(r"[a-z0-9_]+"))
     fixture: LightFixture = attrs.field(converter=LightFixture)
-    offset: Vector3 = attrs.field(converter=_vector)
-    direction: Vector3 = attrs.field(default=(0.0, 0.0, -1.0), converter=_vector, validator=_nonzero)
+    pose: LightPose = attrs.field(converter=_pose)
     lumens: float = attrs.field(converter=float, validator=_positive)
     cct_K: float = attrs.field(default=DEFAULT_CCT_K, converter=float, validator=_positive)
     cone_deg: float | None = attrs.field(default=None, converter=attrs.converters.optional(float), validator=attrs.validators.optional(_cone))
@@ -112,13 +113,14 @@ def object_lights(sources: Iterable[SourceLight], materials: Iterable[SourceMate
 
     lights = []
     for index, (fixture, source, lumens) in enumerate(mapped):
-        norm = math.hypot(*source.direction)
         lights.append(
             ObjectLight(
                 name="light" if index == 0 else f"light_{index}",
                 fixture=fixture,
-                offset=tuple(_round(component, 4) for component in source.location),
-                direction=tuple(_round(component / norm, 4) for component in source.direction),
+                pose=(
+                    tuple(_round(component, 4) for component in source.location),
+                    (1.0, 0.0, 0.0, 0.0) if fixture is LightFixture.BULB else tuple(_round(component, 6) for component in source.rotation),
+                ),
                 lumens=lumens,
                 cct_K=color_temperature(source.color),
                 cone_deg=min(_round(math.degrees(source.spot_size), 2), MAX_CONE_DEG) if fixture is LightFixture.SPOT else None,
@@ -252,10 +254,7 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
             ModelFormat.USDC,
             ModelFormat.USDZ,
         }
-        return any(
-            os.path.splitext(filename.lower())[-1].lstrip(".") == ext.value
-            for ext in usd_extensions
-        )
+        return any(os.path.splitext(filename.lower())[-1].lstrip(".") == ext.value for ext in usd_extensions)
 
     def process_entity(self, annotation, dest):
         from arena_assets.utils.ModelConverter.converter import ModelConverter
@@ -280,9 +279,7 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
                 logger.info("Baked USD model %s to %s", input_file, baked_usd_path)
                 input_file = baked_usd_path
 
-            model_paths = (
-                dest / f"{annotation.name}.{ext.value}" for ext in self._formats
-            )
+            model_paths = (dest / f"{annotation.name}.{ext.value}" for ext in self._formats)
 
             with ModelConverter() as model_converter:
                 model_converter.load(str(input_file))
@@ -336,9 +333,7 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
             return annotation
 
         except Exception as e:
-            logger.error(
-                "Unexpected error processing entity %s: %s", annotation.path, repr(e)
-            )
+            logger.error("Unexpected error processing entity %s: %s", annotation.path, repr(e))
             return None
 
         finally:
@@ -376,11 +371,7 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
     def procthor(self):
         logger.info("Enabling Procthor export option.")
         self._procthor = {}
-        self._pipeline.append(
-            lambda annotation: self._procthor.update(
-                {annotation.path.replace(os.sep, "_"): annotation.as_procthor}
-            )
-        )
+        self._pipeline.append(lambda annotation: self._procthor.update({annotation.path.replace(os.sep, "_"): annotation.as_procthor}))
 
         def export():
             with open(os.path.join(self.output_path, "asset-database.json"), "w") as f:

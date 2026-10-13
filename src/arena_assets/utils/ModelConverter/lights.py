@@ -6,6 +6,7 @@ import typing
 import attrs
 
 Vector3 = tuple[float, float, float]
+Quaternion = tuple[float, float, float, float]
 
 DEFAULT_CCT_K = 6500.0
 MIN_CCT_K = 1000.0
@@ -30,7 +31,8 @@ class SourceLight:
     power: float
     color: Vector3
     location: Vector3
-    direction: Vector3
+    rotation: Quaternion = (1.0, 0.0, 0.0, 0.0)
+    """Unit quaternion (w, x, y, z) of the light, which emits along its local -z axis."""
 
 
 @attrs.frozen(kw_only=True)

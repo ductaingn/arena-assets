@@ -261,7 +261,6 @@ class ModelConverter:
     def lights(self) -> list[SourceLight]:
         """Light objects of the scene in world coordinates, sorted by object name."""
         bpy.context.view_layer.update()
-        down = mathutils.Vector((0.0, 0.0, -1.0))
         return [
             SourceLight(
                 name=obj.name,
@@ -271,7 +270,7 @@ class ModelConverter:
                 power=obj.data.energy,
                 color=tuple(obj.data.color),
                 location=tuple(obj.matrix_world.translation),
-                direction=tuple(obj.matrix_world.to_3x3() @ down),
+                rotation=tuple(obj.matrix_world.decompose()[1]),
             )
             for obj in sorted(bpy.context.scene.objects, key=lambda obj: obj.name)
             if obj.type == "LIGHT"
