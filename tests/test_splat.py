@@ -64,6 +64,11 @@ def apply(matrix: np.ndarray, points: np.ndarray) -> np.ndarray:
     return points @ matrix[:3, :3].T + matrix[:3, 3]
 
 
+def plain(text: str) -> str:
+    """Text without ANSI styling, whitespace runs collapsed."""
+    return " ".join(re.sub(r"\x1b\[[0-9;]*m", "", text).split())
+
+
 def flat(values: np.ndarray) -> str:
     return " ".join(repr(float(value)) for value in np.ravel(values))
 
@@ -330,8 +335,7 @@ def test_annotation_takes_name_desc_source_and_crop_options(source, tmp_path):
 
 
 def test_bare_verb_prints_usage():
-    result = runner.invoke(app, ["splat"])
-    output = " ".join(result.output.split())
+    output = plain(runner.invoke(app, ["splat"]).output)
     assert "Usage" in output
     for needle in ("SOURCE", "OUT_DIR", "--object", "--matrix", "--points", "--width", "--height", "--drop", "Wall frame", "Object frame", "arena asset push object"):
         assert needle in output
@@ -340,8 +344,9 @@ def test_bare_verb_prints_usage():
 def test_help_documents_every_option():
     result = runner.invoke(app, ["splat", "--help"])
     assert result.exit_code == 0
+    output = plain(result.output)
     for option in ("--name", "--object", "--collider-mesh", "--matrix", "--points", "--width", "--height", "--floor", "--depth", "--behind", "--drop", "--max-scale", "--min-opacity", "--desc", "--source"):
-        assert option in result.output
+        assert option in output
 
 
 def test_missing_registration_is_refused(source, tmp_path):

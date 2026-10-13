@@ -1,3 +1,4 @@
+import re
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
@@ -42,6 +43,11 @@ def Xform "chair"
     }}
 }}
 """
+
+
+def plain(text: str) -> str:
+    """Text without ANSI styling, whitespace runs collapsed."""
+    return " ".join(re.sub(r"\x1b\[[0-9;]*m", "", text).split())
 
 
 def make_bundle(path: Path, usd: str | None = ".usda", sdf: bool = True) -> Path:
@@ -317,7 +323,7 @@ def test_transposed_matrix_is_refused(bundle, mesh):
 
 
 def test_bare_verb_prints_usage():
-    output = " ".join(runner.invoke(app, ["collider"]).output.split())
+    output = plain(runner.invoke(app, ["collider"]).output)
     for needle in ("Usage", "BUNDLE", "MESH", "--matrix", "--remove", "collider.obj", "NAME.sdf/NAME.sdf", "arena asset push object"):
         assert needle in output
 
