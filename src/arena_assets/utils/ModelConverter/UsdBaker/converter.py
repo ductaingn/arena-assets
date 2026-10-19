@@ -1,6 +1,7 @@
 # converter.py
 # use with isaacsim 5.x
 import asyncio
+import io
 import os
 import shutil
 import sys
@@ -8,8 +9,10 @@ import zipfile
 
 try:
     # Ensure each print flushes promptly for IPC readers.
-    sys.stdout.reconfigure(line_buffering=True)
-    sys.stderr.reconfigure(line_buffering=True)
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
+    if isinstance(sys.stderr, io.TextIOWrapper):
+        sys.stderr.reconfigure(line_buffering=True)
 except Exception:
     pass
 

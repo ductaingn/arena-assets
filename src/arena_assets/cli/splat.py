@@ -79,6 +79,7 @@ def splat_command(
     name = name or out_dir.resolve().name
     try:
         if object_:
+            assert depth is not None
             crop = ObjectCrop(width=width, depth=depth, height=height, floor=floor)
         else:
             crop = WallCrop(width=width, height=height, floor=floor, depth=0.05 if depth is None else depth, behind=behind or 0.0)
@@ -86,6 +87,7 @@ def splat_command(
         if matrix is not None:
             to_target = parse_matrix(matrix)
         else:
+            assert points is not None
             fit = fit_similarity(*read_points(points))
             to_target = fit.matrix
             safe_echo(f"fitted scale {fit.scale:.6g}, RMS residual {fit.rms:.4g} m over {fit.pairs} pairs", ctx)

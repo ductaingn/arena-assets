@@ -145,7 +145,7 @@ def _edit_usd(path: Path, edit: Callable[[Usd.Stage], bool]) -> bool:
     return True
 
 
-def _links(tree: ET.ElementTree, sdf: Path) -> list[ET.Element]:
+def _links(tree: ET.ElementTree[ET.Element], sdf: Path) -> list[ET.Element]:
     links = tree.getroot().findall("./model/link")
     if not links:
         raise ColliderError(f"{sdf} has no <model><link> to hold the collision")
@@ -158,7 +158,7 @@ def _collision(name: str, uri: str) -> ET.Element:
     return collision
 
 
-def _save_sdf(tree: ET.ElementTree, sdf: Path) -> None:
+def _save_sdf(tree: ET.ElementTree[ET.Element], sdf: Path) -> None:
     ET.indent(tree, "  ")
     tree.write(sdf, encoding="unicode", xml_declaration=True)
 

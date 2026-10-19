@@ -2,7 +2,7 @@ import atexit
 import logging
 import sys
 
-import enlighten
+import enlighten  # pyright: ignore[reportMissingImports]
 
 logging.basicConfig(level=logging.WARNING, format="%(message)s", stream=sys.stderr)
 _logger = logging.getLogger()

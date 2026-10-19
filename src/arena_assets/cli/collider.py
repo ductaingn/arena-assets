@@ -50,6 +50,7 @@ def collider_command(
             stripped = remove_collider(bundle)
             safe_echo(f"removed the collider from {_names(bundle, stripped)}" if stripped is not None else "the bundle had no collider", ctx)
         else:
+            assert mesh is not None
             transform = parse_matrix(matrix, "the mesh frame to the bundle frame") if matrix is not None else None
             baked, triangles = attach_mesh(bundle, mesh, transform)
             safe_echo(f"baked {triangles} collider triangles into {_names(bundle, baked)}", ctx)

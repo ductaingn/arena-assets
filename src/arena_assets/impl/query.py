@@ -63,7 +63,9 @@ def query_database(database_path: str, asset_type: AssetType, query_target: str,
         annotation = annotation_t.from_metadata(dict(metadata))
         semantic[annotation.path] = (annotation, distance)
 
-    corpus = [annotation_t.from_metadata(dict(metadata)) for metadata in db.list_all(asset_type.value, where=where)["metadatas"] if metadata]
+    listed = db.list_all(asset_type.value, where=where)["metadatas"]
+    assert listed is not None
+    corpus = [annotation_t.from_metadata(dict(metadata)) for metadata in listed if metadata]
     lexical = _lexical_rank(query_target, corpus)
 
     fused: dict[str, float] = {}

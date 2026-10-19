@@ -12,7 +12,7 @@ TextOrEmbedding = str | list[float]
 
 
 class Database:
-    def __init__(self, path: Path):
+    def __init__(self, path: str | Path):
         self._client = chromadb.PersistentClient(path=str(path))
         self._embedding_function = embedding_functions.DefaultEmbeddingFunction()
 
@@ -20,7 +20,7 @@ class Database:
         """Get or create a ChromaDB collection."""
         return self._client.get_or_create_collection(
             name=name,
-            embedding_function=self._embedding_function,
+            embedding_function=self._embedding_function,  # pyright: ignore[reportArgumentType]
         )
 
     def store(self, collection: str, annotation: Annotation):
@@ -43,7 +43,7 @@ class Database:
 
         return self.collection(collection).query(query_embeddings=[embedding], n_results=num_results, where=where)
 
-    def _to_embedding(self, value: TextOrEmbedding) -> list[float]:
+    def _to_embedding(self, value: TextOrEmbedding) -> chromadb.api.types.Embedding | list[float]:
         if isinstance(value, str):
             return self._embedding_function([value])[0]
         return value

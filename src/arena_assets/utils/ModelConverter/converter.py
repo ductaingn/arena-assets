@@ -151,7 +151,7 @@ class ModelConverter:
     def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: types.TracebackType | None):
         self.__ctx.__exit__(exc_type, exc_val, exc_tb)
 
-    __exts: typing.ClassVar[dict[ModelFormat, _ModelConverterExt]] = {}
+    __exts: typing.ClassVar[dict[str, type[_ModelConverterExt]]] = {}
 
     @classmethod
     def register(cls, *ext: ModelFormat) -> typing.Callable[[type[_ModelConverterExt]], None]:
@@ -177,8 +177,8 @@ class ModelConverter:
             bpy.ops.object.select_all(action="DESELECT")
 
     def __init__(self, *, reset: bool = True):
-        self._reset: bool = reset
-        self._coordinates: CoordinateSystem = CoordinateSystem.default()
+        self._reset = reset
+        self._coordinates = CoordinateSystem.default()
         self._stdout = io.StringIO()
         self._stderr = io.StringIO()
 
@@ -236,6 +236,7 @@ class ModelConverter:
 
         if anchor is None:
             return np.eye(4)
+        assert before is not None
         bpy.context.view_layer.update()
         return np.array(anchor.matrix_world @ before.inverted())
 
@@ -732,7 +733,7 @@ ModelConverter.register(ModelFormat.SDF)(
 def gltf_export(filepath: str):
     """Export glTF and clear typing's alias caches, which otherwise keep the exporter and bpy alive at exit."""
     bpy.ops.export_scene.gltf(filepath=filepath)
-    for cleanup in typing._cleanups:
+    for cleanup in typing._cleanups:  # pyright: ignore[reportAttributeAccessIssue]
         cleanup()
 
 

@@ -241,7 +241,7 @@ def fix_file(path: Path, spec: Spec, storage_class_domain: tuple[str | None, str
         tags.append(f"domain::{domain}")
 
     # kind inference from the asset name
-    if not _has_facet(tags, "kind"):
+    if not _has_facet(tags, "kind") and asset_class is not None:
         name = str(raw.get("name", ""))
         lookup = {
             "object": (_OBJECT_KIND_TABLE, _OBJECT_KIND_OVERRIDES),

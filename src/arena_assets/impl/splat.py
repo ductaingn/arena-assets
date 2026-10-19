@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import Protocol, Self
 
 import attrs
 import numpy as np
@@ -18,6 +19,17 @@ from arena_assets.utils.mesh_io import MeshError, read_mesh
 
 EXTENT_PAD_SCALES = 3.0
 COLLINEAR_RATIO = 1e-6
+
+
+class _VtArray(Protocol):
+    def __init__(self, values: list[object], /) -> None: ...
+
+    @classmethod
+    def FromNumpy(cls, array: np.ndarray, /) -> Self: ...
+
+    def __len__(self) -> int: ...
+
+    def __getitem__(self, index: int, /) -> object: ...
 
 
 class SplatError(Exception):
@@ -239,7 +251,7 @@ def _select(prim: Usd.Prim, to_target: np.ndarray, crop: Crop, drops: list[Bound
     return _Field(prim=prim, to_stage=to_stage, positions=positions, scales=scales, keep=keep)
 
 
-def _filtered(value: object, kept: np.ndarray, count: int) -> object:
+def _filtered(value: _VtArray, kept: np.ndarray, count: int) -> _VtArray:
     array = np.asarray(value)
     stride = len(array) // count
     pick = (kept[:, None] * stride + np.arange(stride)).ravel()
