@@ -73,6 +73,15 @@ The build adds a z range to each slot, from the floor of the object's bounding b
 
 `ObjectAnnotation.query_affordance(kind, slot)` returns a placed slot, one with a bbox and a yaw, as an `AffordanceSlot` and `affordance_slots()` returns every placed one. The slot schema (`Slot`, `structure_affordances`), the placed `AffordanceSlot` and the claims on them all live in `arena_simulation_setup.utils.affordance`, so the build and the runtime read slots the same way: an `AffordanceClaims`, one per placed object, keeps no two overlapping affordance boxes occupied at the same time, across all kinds. `available(kind)` lists the slots that overlap no occupied one, `closest(xy, kind)` returns the available slot nearest to an object-frame point (by distance to its box, 0 inside), and `claim` refuses a slot whose box overlaps an occupied one. Build it as `AffordanceClaims(annotation.affordance_slots())`, or as `AffordanceClaims.parse(affordances)` from the `affordances` block of a built `annotation.yaml`. A slot without a z range overlaps through all heights.
 
+`arena-assets semantic seats` proposes sit slots with Gemini (install `arena_assets[vlm]` and set `GEMINI_API_KEY`):
+
+```sh
+arena-assets semantic seats propose ./dataset --renders ./models --out seats.yaml [--only Residential/Object/Sofa_B]...
+arena-assets semantic seats apply seats.yaml ./dataset [--overwrite]
+```
+
+`propose` first asks which objects are for sitting, by asset path and description in batches of 50, unless `--only` names the assets. For each of them it sends the top-down and perspective previews of a build with `-o previews` and the worked example [seats_example.yaml](src/arena_assets/semantic/seats_example.yaml), asks `--samples` times (default 3) and keeps the slot count most answers agree on, the median box of matched slots and the facings most answers name. The example object is asked without its own example. It prints the tokens used and merges each object's proposal into `--out` as soon as it has it, keeping the objects already there. It stops at the first object whose samples all fail, the proposals so far kept. `apply` writes reviewed proposals into the source annotations, skipping objects that already have `sit` slots unless `--overwrite`, with which an empty list removes them. It checks every proposal before writing any file.
+
 ### Sound assets
 
 A sound asset is a directory `Sound/<Name>/` holding its wav files and a `<Name>.yaml` manifest (version 2: `kind`, `level_db`, `loop`, `variants`, optional `desc` and `tags`). The manifest is the only annotation source: the build derives `annotation.yaml` from it (tags are the manifest tags, every variant's tags, and the kind) and fails on a manifest with the wrong version or without `kind`, `level_db` or `variants`.

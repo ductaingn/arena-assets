@@ -32,6 +32,9 @@ build = [
 test = [
     "pytest~=8.0",
 ]
+vlm = [
+    "google-genai~=2.32",
+]
 
 [project.urls]
 Homepage = "https://github.com/voshch/arena-assets"
@@ -43,7 +46,7 @@ where = ["."]
 include = ["arena_assets*"]
 
 [tool.setuptools.package-data]
-arena_assets = ["semantic/asa.yaml"]
+arena_assets = ["semantic/asa.yaml", "semantic/seats_example.yaml"]
 
 [tool.ruff]
 target-version = "py311"

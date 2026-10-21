@@ -1,0 +1,34 @@
+{
+  "bbox": [[-1.4647, 1.4644], [-1.2297, 1.2267], [0.0, 0.9]],
+  "answers": [
+    {"slots": [
+      {"box_2d": [288, 329, 486, 500], "facing": ["down"]},
+      {"box_2d": [288, 500, 486, 667], "facing": ["down"]},
+      {"box_2d": [493, 179, 687, 319], "facing": ["right"]},
+      {"box_2d": [691, 66, 868, 319], "facing": ["right", "down"]},
+      {"box_2d": [493, 678, 670, 934], "facing": ["left"]},
+      {"box_2d": [674, 678, 909, 998], "facing": ["right", "left", "down"]}
+    ]},
+    {"slots": [
+      {"box_2d": [294, 335, 492, 506], "facing": ["down"]},
+      {"box_2d": [294, 506, 492, 673], "facing": ["down"]},
+      {"box_2d": [499, 185, 693, 325], "facing": ["right"]},
+      {"box_2d": [697, 72, 874, 325], "facing": ["right"]},
+      {"box_2d": [499, 684, 676, 940], "facing": ["left"]},
+      {"box_2d": [680, 684, 915, 1004], "facing": ["right", "left", "down"]}
+    ]},
+    {"slots": [
+      {"box_2d": [284, 325, 482, 496], "facing": ["down"]},
+      {"box_2d": [284, 496, 482, 663], "facing": ["down"]},
+      {"box_2d": [489, 175, 683, 315], "facing": ["right"]},
+      {"box_2d": [687, 62, 864, 315], "facing": ["right", "down"]},
+      {"box_2d": [489, 674, 666, 930], "facing": ["left"]},
+      {"box_2d": [670, 674, 905, 994], "facing": ["left", "down"]}
+    ]},
+    {"slots": [
+      {"box_2d": [288, 329, 486, 500], "facing": ["down"]},
+      {"box_2d": [288, 500, 486, 667], "facing": ["down"]},
+      {"box_2d": [493, 179, 687, 319], "facing": ["right"]}
+    ]}
+  ]
+}
