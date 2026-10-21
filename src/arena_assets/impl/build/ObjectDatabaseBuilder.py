@@ -10,17 +10,25 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import attrs
+import numpy as np
+import yaml
 from cattrs.gen import make_dict_structure_fn, make_dict_unstructure_fn, override
 
 from arena_assets import semantic
-from arena_assets.impl import AssetType, SpatialAnnotation, collider, converter
+from arena_assets.impl import ANNOTATION_NAME, AssetType, Face, SpatialAnnotation, collider, converter
+from arena_assets.impl.affordance import Affordances, structure_affordances, unstructure_affordances
+from arena_assets.utils.affordance import SEAT_FALLBACK, SEAT_SIZE, largest_seat, surface_z
+from arena_assets.utils.geom import BoundingBox
 from arena_assets.utils.logging import get_logger
 from arena_assets.utils.mesh_io import read_mesh
 from arena_assets.utils.ModelConverter import ModelFormat
 from arena_assets.utils.ModelConverter.lights import DEFAULT_CCT_K, Quaternion, SourceLight, SourceMaterial, Vector3, color_temperature, nearest_material
 from arena_assets.utils.ModelConverter.UsdBaker import UsdBaker
 
-from . import DatabaseBuilder, OptionRegistry
+from . import DatabaseBuilder, OptionRegistry, OverwriteMode
+
+if typing.TYPE_CHECKING:
+    from arena_simulation_setup.utils.affordance import AffordanceKind, AffordanceSlot, Box, Footprint, Slot
 
 logger = get_logger("build.object")
 
@@ -130,10 +138,100 @@ def object_lights(sources: Iterable[SourceLight], materials: Iterable[SourceMate
     return lights
 
 
+def _seat_box(footprint: Footprint, floor: float, z: float) -> Box:
+    return (footprint[0], footprint[1], (floor, z))
+
+
+def place_slot(slot: Slot, points: np.ndarray, triangles: np.ndarray, bounding_box: BoundingBox, face: Face, *, recompute: bool, label: str) -> Slot:
+    """The slot with a z range from the object floor to the seat surface, an empty slot placed on the largest seat facing the face axis."""
+    from arena_simulation_setup.utils.affordance import Slot, has_z
+    from arena_simulation_setup.utils.geometry import Facing
+
+    fallback = round(min(SEAT_FALLBACK, bounding_box.max_z), 3)
+    if slot.bbox is None:
+        seat = largest_seat(points, triangles)
+        if seat is None:
+            logger.warning("%s has no seat surface, placing it at the bbox center %.3f m high", label, fallback)
+            seat = ((bounding_box.min_x + bounding_box.max_x) / 2, (bounding_box.min_y + bounding_box.max_y) / 2, fallback)
+        x, y, z = seat
+        half = SEAT_SIZE / 2
+        footprint = ((round(max(x - half, bounding_box.min_x), 3), round(min(x + half, bounding_box.max_x), 3)), (round(max(y - half, bounding_box.min_y), 3), round(min(y + half, bounding_box.max_y), 3)))
+        return Slot(bbox=_seat_box(footprint, bounding_box.min_z, z), facing=slot.facing if slot.facing is not None else Facing.parse(face.value))
+    (x_min, x_max), (y_min, y_max), (_, z_max) = slot.bbox
+    if x_min < bounding_box.min_x or x_max > bounding_box.max_x or y_min < bounding_box.min_y or y_max > bounding_box.max_y:
+        logger.warning("%s bbox %s reaches past the object bbox %s", label, slot.bbox, list(bounding_box))
+    if has_z(slot.bbox) and not recompute:
+        if z_max > bounding_box.max_z:
+            logger.warning("%s sits at %.3f m, above the object top at %.3f m", label, z_max, bounding_box.max_z)
+        return slot
+    z = surface_z(points, triangles, slot.bbox[:2])
+    if z is None:
+        logger.warning("%s has no seat surface under its bbox, using %.3f m", label, fallback)
+        z = fallback
+    return Slot(bbox=_seat_box(slot.bbox[:2], bounding_box.min_z, z), facing=slot.facing)
+
+
+def place_slots(annotation: ObjectAnnotation, points: np.ndarray, triangles: np.ndarray, bounding_box: BoundingBox, *, recompute: bool) -> Affordances:
+    return {kind: [place_slot(slot, points, triangles, bounding_box, annotation.face, recompute=recompute, label=f"{annotation.path} {kind} slot {index}") for index, slot in enumerate(slots)] for kind, slots in annotation.affordances.items()}
+
+
+BUILT_MODEL_FORMATS = ("usdz", "usd", "usdc", "usda", "fbx", "glb", "gltf", "obj", "sdf")
+
+
+def built_model(dest: Path, name: str) -> Path | None:
+    """The first model a build left in dest, by format preference, an SDF export standing in with the visual mesh in its directory."""
+    for ext in BUILT_MODEL_FORMATS:
+        path = dest / f"{name}.sdf" / f"{name}.dae" if ext == "sdf" else dest / f"{name}.{ext}"
+        if path.is_file():
+            return path
+    return None
+
+
+def carry_slots(slots: list[Slot], built: list[Slot]) -> list[Slot]:
+    """Slots given the z ranges of an earlier build, matched by x and y ranges, the slot without a bbox taking the one built slot no source bbox matches."""
+    from arena_simulation_setup.utils.affordance import Slot, has_z
+
+    known = {(slot.bbox[0], slot.bbox[1]): slot.bbox for slot in built if slot.bbox is not None and has_z(slot.bbox)}
+    sourced = {(slot.bbox[0], slot.bbox[1]) for slot in slots if slot.bbox is not None}
+    leftover = [slot for slot in built if slot.bbox is not None and has_z(slot.bbox) and (slot.bbox[0], slot.bbox[1]) not in sourced]
+    carried = []
+    for slot in slots:
+        if slot.bbox is None:
+            placed = leftover[0] if len(leftover) == 1 else None
+            same_facing = placed is not None and placed.facing is not None and (slot.facing is None or slot.facing.serialize() == placed.facing.serialize())
+            carried.append(placed if placed is not None and same_facing else slot)
+        elif not has_z(slot.bbox) and (slot.bbox[0], slot.bbox[1]) in known:
+            carried.append(Slot(bbox=known[(slot.bbox[0], slot.bbox[1])], facing=slot.facing))
+        else:
+            carried.append(slot)
+    return carried
+
+
 @attrs.define
 class ObjectAnnotation(SpatialAnnotation):
     lights: list[ObjectLight] = attrs.field(factory=list, converter=_structure_lights, validator=_unique_names)
     collider: str = ""
+    affordances: Affordances = attrs.field(factory=dict, converter=structure_affordances)
+
+    def query_affordance(self, kind: AffordanceKind | str, slot: int = 0) -> AffordanceSlot:
+        from arena_simulation_setup.utils.affordance import affordance_kind
+
+        try:
+            key = affordance_kind(kind)
+        except ValueError as e:
+            raise KeyError(str(e)) from None
+        if key not in self.affordances:
+            raise KeyError(f"{self.name} has no {key} affordance, it has: {', '.join(self.affordances) or 'none'}")
+        slots = self.affordances[key]
+        if not 0 <= slot < len(slots):
+            raise KeyError(f"{self.name} has {len(slots)} {key} slots, got slot {slot}")
+        return slots[slot].placed(key, slot)
+
+    def affordance_slots(self) -> list[AffordanceSlot]:
+        """Placed slots of every kind, the input of AffordanceClaims."""
+        from arena_simulation_setup.utils.affordance import placed_slots
+
+        return placed_slots(self.affordances)
 
     @property
     def as_metadata(self) -> dict:
@@ -142,6 +240,8 @@ class ObjectAnnotation(SpatialAnnotation):
             metadata["lights"] = json.dumps(converter.unstructure(self.lights))
         if self.collider:
             metadata["collider"] = self.collider
+        if self.affordances:
+            metadata["affordances"] = json.dumps(unstructure_affordances(self.affordances))
         return metadata
 
     @classmethod
@@ -150,6 +250,13 @@ class ObjectAnnotation(SpatialAnnotation):
         if lights := metadata.get("lights"):
             annotation.lights = json.loads(lights)
         annotation.collider = metadata.get("collider", "")
+        if affordances := metadata.get("affordances"):
+            try:
+                annotation.affordances = json.loads(affordances)
+            except ModuleNotFoundError as e:
+                if e.name != "arena_simulation_setup":
+                    raise
+                logger.debug("%s keeps no affordances, reading them needs arena_simulation_setup", annotation.path)
         return annotation
 
     @property
@@ -205,7 +312,7 @@ def _structure_light(value: typing.Any, _: type) -> ObjectLight:
 converter.register_structure_hook(ObjectLight, _structure_light)
 converter.register_unstructure_hook(ObjectLight, make_dict_unstructure_fn(ObjectLight, converter, cone_deg=override(omit_if_default=True), glow=override(omit_if_default=True)))
 converter.register_structure_hook(ObjectAnnotation, make_dict_structure_fn(ObjectAnnotation, converter, _cattrs_detailed_validation=False))
-converter.register_unstructure_hook(ObjectAnnotation, make_dict_unstructure_fn(ObjectAnnotation, converter, lights=override(omit_if_default=True), collider=override(omit_if_default=True)))
+converter.register_unstructure_hook(ObjectAnnotation, make_dict_unstructure_fn(ObjectAnnotation, converter, lights=override(omit_if_default=True), collider=override(omit_if_default=True), affordances=override(omit_if_default=True, unstruct_hook=unstructure_affordances)))
 
 
 class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
@@ -227,7 +334,47 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
 
         self._pipeline.append(store_db)
 
+        def carry_affordances(annotation: ObjectAnnotation) -> None:
+            if not annotation.affordances:
+                return
+            try:
+                place_on_built(annotation)
+            except Exception:
+                logger.warning("%s keeps its affordance slots unplaced, placing them on the built model failed", annotation.path, exc_info=True)
+
+        def place_on_built(annotation: ObjectAnnotation) -> None:
+            from arena_simulation_setup.utils.affordance import has_z
+
+            dest = self.output_path / annotation.path
+            built = dest / ANNOTATION_NAME
+            if built.is_file() and not self._recompute_affordances:
+                previous = structure_affordances((yaml.safe_load(built.read_text()) or {}).get("affordances"))
+                for kind, slots in annotation.affordances.items():
+                    annotation.affordances[kind] = carry_slots(slots, previous.get(kind, []))
+            if not self._recompute_affordances and all(slot.bbox is not None and has_z(slot.bbox) for slots in annotation.affordances.values() for slot in slots):
+                return
+            model = built_model(dest, annotation.name)
+            if model is None:
+                logger.warning("%s has no built model to place its affordance slots on, run a model build", annotation.path)
+                return
+            from arena_assets.utils.ModelConverter.converter import ModelConverter
+
+            with ModelConverter() as model_converter:
+                model_converter.load(str(model))
+                model_converter.rectify()
+                bounding_box = model_converter.bounding_box().round(4)
+                points, triangles = model_converter.triangles()
+            if bounding_box.volume <= 0:
+                logger.warning("%s loaded without meshes, its affordance slots stay unplaced", model)
+                return
+            annotation.affordances = place_slots(annotation, points, triangles, bounding_box, recompute=self._recompute_affordances)
+            logger.info("Placed the affordance slots of %s on %s", annotation.path, model)
+
+        if self._overwrite == OverwriteMode.ANNOTATIONS_ONLY:
+            self._pipeline.insert(0, carry_affordances)
+
         self._previews_enabled = False
+        self._recompute_affordances = False
 
     @classmethod
     def find_mainfile(cls, annotation: ObjectAnnotation) -> str | None:
@@ -289,6 +436,9 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
                 model_converter.remove_lights()
                 extracted = object_lights(source_lights, model_converter.emissive_materials())
                 model_converter.prepare_glow(light.glow for light in annotation.lights or extracted if light.glow is not None)
+                if annotation.affordances:
+                    points, triangles = model_converter.triangles()
+                    annotation.affordances = place_slots(annotation, points, triangles, bounding_box, recompute=self._recompute_affordances)
 
                 if self._previews_enabled:
                     # model_converter.render_perspective(str(dest / f"{annotation.name}.png"), resolution=None, theta=annotation.face.angle + 30)
@@ -409,6 +559,10 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
                 self._usd_baker.cleanup()
 
         self._post.append(cleanup_baker)
+
+    @enable.register("recompute-affordances")
+    def recompute_affordances(self):
+        self._recompute_affordances = True
 
     @enable.register("previews")
     def previews(self):

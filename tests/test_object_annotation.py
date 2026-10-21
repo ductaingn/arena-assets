@@ -1,3 +1,5 @@
+import importlib.util
+import json
 import math
 
 import pytest
@@ -31,6 +33,14 @@ def test_metadata_roundtrip():
     restored = ObjectAnnotation.from_metadata(annotation.as_metadata)
     assert restored == annotation
     assert restored.as_metadata == annotation.as_metadata
+
+
+@pytest.mark.skipif(importlib.util.find_spec("arena_simulation_setup") is not None, reason="affordances structure when arena_simulation_setup is installed")
+def test_metadata_with_affordances_reads_without_arena_simulation_setup():
+    metadata = {**make_annotation().as_metadata, "affordances": json.dumps({"sit": [{"bbox": [[0.0, 0.5], [0.0, 0.5]], "yaw": "-y"}]})}
+    restored = ObjectAnnotation.from_metadata(metadata)
+    assert restored.affordances == {}
+    assert restored.name == "OfficeChair"
 
 
 def test_metadata_extents():
