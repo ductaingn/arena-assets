@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import re
 import stat
 from pathlib import Path
 
@@ -18,6 +19,13 @@ SOFA_BBOX = BoundingBox(STORED["bbox"])
 FRAME = seats.RenderFrame.of(SOFA_BBOX)
 
 runner = CliRunner()
+
+
+def plain(text: str) -> str:
+    """Text without ANSI styling, whitespace runs collapsed."""
+    return " ".join(re.sub(r"\x1b\[[0-9;]*m", "", text).split())
+
+
 needs_geometry = pytest.mark.skipif(importlib.util.find_spec("arena_simulation_setup") is None, reason="arena_simulation_setup comes with the Arena workspace")
 
 
@@ -185,21 +193,20 @@ def test_write_atomic_replaces_the_file_keeping_its_mode_and_no_temporary(tmp_pa
 
 
 def test_cli_seats_without_verb_lists_verbs():
-    result = runner.invoke(app, ["semantic", "seats"])
-    assert "propose" in result.output
-    assert "apply" in result.output
+    output = plain(runner.invoke(app, ["semantic", "seats"]).output)
+    assert "propose" in output
+    assert "apply" in output
 
 
 def test_cli_propose_and_apply_without_arguments_show_their_help():
-    propose = runner.invoke(app, ["semantic", "seats", "propose"])
-    assert "--renders" in propose.output
-    assert "--thinking" in propose.output
-    apply = runner.invoke(app, ["semantic", "seats", "apply"])
-    assert "--overwrite" in apply.output
+    propose = plain(runner.invoke(app, ["semantic", "seats", "propose"]).output)
+    assert "--renders" in propose
+    assert "--thinking" in propose
+    assert "--overwrite" in plain(runner.invoke(app, ["semantic", "seats", "apply"]).output)
 
 
 def test_cli_propose_help_lists_the_thinking_levels():
-    output = runner.invoke(app, ["semantic", "seats", "propose", "--help"]).output
+    output = plain(runner.invoke(app, ["semantic", "seats", "propose", "--help"]).output)
     for level in ("minimal", "low", "medium", "high"):
         assert level in output
 
