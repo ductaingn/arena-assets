@@ -3,6 +3,7 @@
 import typer
 
 from .lint import add_to_cmd as add_lint
+from .seats import add_to_cmd as add_seats
 
 
 def add_to_cmd(cmd: typer.Typer):
@@ -16,5 +17,6 @@ def add_to_cmd(cmd: typer.Typer):
     )
 
     add_lint(semantic_app)
+    add_seats(semantic_app)
 
     cmd.add_typer(semantic_app, name="semantic")

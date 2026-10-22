@@ -259,6 +259,29 @@ class ModelConverter:
             )
         )
 
+    def triangles(self) -> tuple[np.ndarray, np.ndarray]:
+        """World-space vertices and triangle indices of every mesh in the scene."""
+        bpy.context.view_layer.update()
+        points: list[np.ndarray] = []
+        triangles: list[np.ndarray] = []
+        offset = 0
+        for obj in bpy.context.scene.objects:
+            if obj.type != "MESH":
+                continue
+            mesh = obj.data
+            mesh.calc_loop_triangles()
+            vertices = np.empty(len(mesh.vertices) * 3, dtype=np.float32)
+            mesh.vertices.foreach_get("co", vertices)
+            indices = np.empty(len(mesh.loop_triangles) * 3, dtype=np.int32)
+            mesh.loop_triangles.foreach_get("vertices", indices)
+            matrix = np.array(obj.matrix_world)
+            points.append(vertices.reshape(-1, 3).astype(np.float64) @ matrix[:3, :3].T + matrix[:3, 3])
+            triangles.append(indices.reshape(-1, 3).astype(np.int64) + offset)
+            offset += len(mesh.vertices)
+        if not points:
+            return np.zeros((0, 3)), np.zeros((0, 3), np.int64)
+        return np.concatenate(points), np.concatenate(triangles)
+
     def lights(self) -> list[SourceLight]:
         """Light objects of the scene in world coordinates, sorted by object name."""
         bpy.context.view_layer.update()

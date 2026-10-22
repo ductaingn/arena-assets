@@ -222,3 +222,128 @@ def test_build_gives_usd_visual_meshes_collision(tmp_path):
         assert prim.HasAPI(UsdPhysics.CollisionAPI)
         assert not prim.HasAPI(UsdPhysics.RigidBodyAPI)
         assert UsdPhysics.MeshCollisionAPI(prim).GetApproximationAttr().Get() == UsdPhysics.Tokens.none
+
+
+SEAT_BLOCK = ((-0.25, 0.25), (-0.25, 0.25), (0.0, 0.45))
+SEAT_SLOTS = [{"bbox": [[-0.2, 0.2], [-0.2, 0.2]], "yaw": "-y"}, {}]
+
+
+def _write_seat_source(directory, slots):
+    directory.mkdir(parents=True)
+    (directory / "seat.usda").write_text(_usda_box("Z", extents=SEAT_BLOCK))
+    (directory / ANNOTATION_NAME).write_text(yaml.safe_dump({"desc": "seat", "face": "+x", "affordances": {"sit": slots}}))
+
+
+def test_build_gives_sit_slots_the_seat_height(tmp_path):
+    pytest.importorskip("bpy")
+    pytest.importorskip("arena_simulation_setup")
+    from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectDatabaseBuilder
+
+    source = tmp_path / "input" / "Object" / "seat"
+    _write_seat_source(source, SEAT_SLOTS)
+    builder = ObjectDatabaseBuilder(tmp_path / "input", tmp_path / "output")
+    builder.enable("formats", "usdz")
+    dest = tmp_path / "output" / "Object" / "seat"
+    dest.mkdir(parents=True)
+    built = builder.process_entity(builder.read_annotation_file(source), dest)
+
+    assert built is not None
+    annotated, placed = (slot.unstructure() for slot in built.affordances["sit"])
+    assert annotated == {"bbox": [[-0.2, 0.2], [-0.2, 0.2], [0.0, 0.45]], "yaw": "-y"}
+    assert placed["bbox"][2] == [0.0, 0.45]
+    assert placed["yaw"] == "+x"
+
+
+def test_annotation_refresh_keeps_the_built_seat_height(tmp_path):
+    pytest.importorskip("bpy")
+    pytest.importorskip("arena_simulation_setup")
+    from arena_assets.impl import AssetType
+    from arena_assets.impl.build import DatabaseBuilder, OverwriteMode
+
+    _write_seat_source(tmp_path / "input" / "Object" / "seat", SEAT_SLOTS)
+    builder = DatabaseBuilder.Builder(AssetType.OBJECT)
+    first = builder(input_path=tmp_path / "input", output_path=tmp_path / "output")
+    first.enable("formats", "usdz")
+    first.build()
+    dest = tmp_path / "output" / "Object" / "seat"
+    built = yaml.safe_load((dest / ANNOTATION_NAME).read_text())
+    for slot in built["affordances"]["sit"]:
+        slot["bbox"][2] = [0.0, 0.5]
+    (dest / ANNOTATION_NAME).write_text(yaml.safe_dump(built))
+    (dest / "seat.usdz").unlink()
+    builder(input_path=tmp_path / "input", output_path=tmp_path / "output", overwrite=OverwriteMode.ANNOTATIONS_ONLY).build()
+
+    slots = yaml.safe_load((dest / ANNOTATION_NAME).read_text())["affordances"]["sit"]
+    assert [slot["bbox"][2] for slot in slots] == [[0.0, 0.5], [0.0, 0.5]]
+
+
+def test_annotation_refresh_places_new_slots_on_the_built_model(tmp_path):
+    pytest.importorskip("bpy")
+    pytest.importorskip("arena_simulation_setup")
+    from arena_assets.impl import AssetType
+    from arena_assets.impl.build import DatabaseBuilder, OverwriteMode
+
+    source = tmp_path / "input" / "Object" / "seat"
+    _write_seat_source(source, [])
+    builder = DatabaseBuilder.Builder(AssetType.OBJECT)
+    first = builder(input_path=tmp_path / "input", output_path=tmp_path / "output")
+    first.enable("formats", "sdf")
+    first.build()
+    (source / ANNOTATION_NAME).write_text(yaml.safe_dump({"desc": "seat", "face": "+x", "affordances": {"sit": SEAT_SLOTS}}))
+    builder(input_path=tmp_path / "input", output_path=tmp_path / "output", overwrite=OverwriteMode.ANNOTATIONS_ONLY).build()
+
+    slots = yaml.safe_load((tmp_path / "output" / "Object" / "seat" / ANNOTATION_NAME).read_text())["affordances"]["sit"]
+    assert [slot["bbox"][2] for slot in slots] == [[0.0, 0.45], [0.0, 0.45]]
+    assert (tmp_path / "output" / "Object" / "seat" / "seat.sdf" / "seat.dae").is_file()
+
+
+def test_annotation_refresh_with_recompute_replaces_a_hand_seat_height(tmp_path):
+    pytest.importorskip("bpy")
+    pytest.importorskip("arena_simulation_setup")
+    from arena_assets.impl import AssetType
+    from arena_assets.impl.build import DatabaseBuilder, OverwriteMode
+
+    _write_seat_source(tmp_path / "input" / "Object" / "seat", [{"bbox": [[-0.2, 0.2], [-0.2, 0.2], [0.0, 0.9]], "yaw": "-y"}])
+    builder = DatabaseBuilder.Builder(AssetType.OBJECT)
+    first = builder(input_path=tmp_path / "input", output_path=tmp_path / "output")
+    first.enable("formats", "usdz")
+    first.build()
+    dest = tmp_path / "output" / "Object" / "seat"
+    assert yaml.safe_load((dest / ANNOTATION_NAME).read_text())["affordances"]["sit"][0]["bbox"][2] == [0.0, 0.9]
+    refresh = builder(input_path=tmp_path / "input", output_path=tmp_path / "output", overwrite=OverwriteMode.ANNOTATIONS_ONLY)
+    refresh.enable("recompute-affordances")
+    refresh.build()
+
+    assert yaml.safe_load((dest / ANNOTATION_NAME).read_text())["affordances"]["sit"][0]["bbox"][2] == [0.0, 0.45]
+
+
+def test_annotation_refresh_keeps_the_asset_when_placing_slots_fails(tmp_path):
+    pytest.importorskip("bpy")
+    pytest.importorskip("arena_simulation_setup")
+    from arena_assets.impl import AssetType
+    from arena_assets.impl.build import DatabaseBuilder, OverwriteMode
+
+    _write_seat_source(tmp_path / "input" / "Object" / "seat", SEAT_SLOTS[:1])
+    builder = DatabaseBuilder.Builder(AssetType.OBJECT)
+    first = builder(input_path=tmp_path / "input", output_path=tmp_path / "output")
+    first.enable("formats", "usdz")
+    first.build()
+    dest = tmp_path / "output" / "Object" / "seat"
+    (dest / ANNOTATION_NAME).write_text(yaml.safe_dump({"desc": "seat", "affordances": {"fly": []}}))
+    builder(input_path=tmp_path / "input", output_path=tmp_path / "output", overwrite=OverwriteMode.ANNOTATIONS_ONLY).build()
+
+    assert (dest / "seat.usdz").is_file()
+    assert yaml.safe_load((dest / ANNOTATION_NAME).read_text())["affordances"]["sit"] == [{"bbox": [[-0.2, 0.2], [-0.2, 0.2]], "yaw": "-y"}]
+
+
+def test_annotation_refresh_without_a_built_model_leaves_new_slots_unplaced(tmp_path):
+    pytest.importorskip("arena_simulation_setup")
+    from arena_assets.impl import AssetType
+    from arena_assets.impl.build import DatabaseBuilder, OverwriteMode
+
+    _write_seat_source(tmp_path / "input" / "Object" / "seat", SEAT_SLOTS[:1])
+    (tmp_path / "output" / "Object" / "seat").mkdir(parents=True)
+    DatabaseBuilder.Builder(AssetType.OBJECT)(input_path=tmp_path / "input", output_path=tmp_path / "output", overwrite=OverwriteMode.ANNOTATIONS_ONLY).build()
+
+    slots = yaml.safe_load((tmp_path / "output" / "Object" / "seat" / ANNOTATION_NAME).read_text())["affordances"]["sit"]
+    assert slots == [{"bbox": [[-0.2, 0.2], [-0.2, 0.2]], "yaw": "-y"}]

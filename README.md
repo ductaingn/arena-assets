@@ -45,6 +45,7 @@ Build options are passed with `-o key=value`:
 | `previews` | object | render preview images |
 | `procthor` | object, material | export a ProcTHOR-compatible `asset-database.json` |
 | `bake-mdl` | object | bake embedded MDL materials with Isaac Sim |
+| `recompute-affordances` | object | recompute the z range of every affordance slot, hand-set ones included |
 
 Each type is discovered under its own directory of the dataset (`Object`, `Material`, `Human`, `Sound`).
 
@@ -55,6 +56,31 @@ Each type is discovered under its own directory of the dataset (`Object`, `Mater
 An object's `annotation.yaml` may carry `lights:`, one entry per light it emits: `name` (default `light`), `fixture` (`bulb`, `spot`, `downlight`, `panel` or `tube`), `pose` in the frame of the built model as `[[x, y, z], [w, x, y, z]]` or `[[x, y, z], [roll, pitch, yaw]]` (the light emits along the local -z axis of that pose, so `[1, 0, 0, 0]` shines straight down), `lumens`, `cct_K` (default 6500) and, for a spot, `cone_deg`. The build fills it from the lights of the source model (point lights become bulbs, spots keep their cone, area lights become panels or downlights, suns are skipped, 683 lm per Blender watt, color temperature from the light color) unless the source annotation already lists lights, and strips the lights from every exported model, so the annotation is the only place an object's light lives. glTF sources carry point and spot lights, USD sources also carry area lights.
 
 A light may also carry `glow`, the name of the Blender material whose surfaces glow while the light is on. The build gives each extracted light the nearest emissive material: one whose Principled BSDF has a constant, non-black `Emission Color` and an `Emission Strength` above 0 (a textured emission never counts), measured from the light to the center of the bounding box of the faces using the material. Several lights may share one material, and an emissive material nearest to no light is left as it is. A hand-annotated `glow` must name a material used by the model, otherwise the build of that object fails with the list of its materials. Glow materials ship dark: their emission is cleared in every exported format, and the simulator lights them with the lamp. In the SDF export each glow material is a visual of its own, `glow_<material>` with the mesh `<name>.glow_<i>.dae` (`i` counts the glow materials in sorted name order), next to `visual` with the remaining faces in `<name>.dae`. A glow visual carries a `<material>` with the base color as `ambient` and `diffuse` and a black `specular` and `emissive`, unless the base color is textured.
+
+### Object affordances
+
+An object's `annotation.yaml` may carry `affordances:`, a map from an affordance kind to its slots. The only kind is `sit`, and an unknown kind fails the build of that object. A slot is a `bbox` over the seat surface in the frame of the built model, `[[x_min, x_max], [y_min, y_max]]`, and a `yaw`: the directions a person sitting there may face, an angle in radians, an axis (`+x`, `+y`, `-x`, `-y` or `xy`, as for `face`) or a list of them. A body rests anywhere inside the bbox and the legs hang over its edge, so each yaw points at an open edge of the seat. Slots of one object may overlap. Slots parse with `arena_simulation_setup.utils.affordance`, which the Arena workspace provides, so a standalone install reads and builds objects with affordances only next to it and lists such objects without their affordances.
+
+```yaml
+affordances:
+  sit:
+    - {bbox: [[-0.46, 0.48], [0.03, 0.72]], yaw: -y}
+    - {bbox: [[-1.30, -0.56], [-1.13, -0.26]], yaw: [+x, -y]}
+    - {}
+```
+
+The build adds a z range to each slot, from the floor of the object's bounding box up to the height of the seat surface seen from above inside the bbox: on a 2 cm grid of the model's top view, the 2 cm height bin between 0.2 and 0.9 m that covers the most cells, as the median of the cells within 5 cm of it. Without such a surface it takes `min(0.45, object height)` and warns. A slot whose source bbox already has a z range keeps it unless the build runs with `-o recompute-affordances`. A slot without a bbox, `{}` or `{yaw: ...}`, gets a square of up to 0.45 m clipped to the object, centered on the seat surface covering the most of the top view (the bbox center when there is none), facing its `yaw` or else `face`. At most one slot per kind may leave its bbox to the build. `--overwrite annotations` copies the z ranges of the last build, matching slots by their x and y ranges and the slot without a bbox to the one built slot no source bbox matches, when it faces the same way, and places the remaining slots (all of them with `-o recompute-affordances`) on the model the last build left in the database, so no model is exported again. Without that model, or when placing fails, the slots stay unplaced and the build warns.
+
+`ObjectAnnotation.query_affordance(kind, slot)` returns a placed slot, one with a bbox and a yaw, as an `AffordanceSlot` and `affordance_slots()` returns every placed one. The slot schema (`Slot`, `structure_affordances`), the placed `AffordanceSlot` and the claims on them all live in `arena_simulation_setup.utils.affordance`, so the build and the runtime read slots the same way: an `AffordanceClaims`, one per placed object, keeps no two overlapping affordance boxes occupied at the same time, across all kinds. `available(kind)` lists the slots that overlap no occupied one, `closest(xy, kind)` returns the available slot nearest to an object-frame point (by distance to its box, 0 inside), and `claim` refuses a slot whose box overlaps an occupied one. Build it as `AffordanceClaims(annotation.affordance_slots())`, or as `AffordanceClaims.parse(affordances)` from the `affordances` block of a built `annotation.yaml`. A slot without a z range overlaps through all heights.
+
+`arena-assets semantic seats` proposes sit slots with Gemini (install `arena_assets[vlm]` and set `GEMINI_API_KEY`):
+
+```sh
+arena-assets semantic seats propose ./dataset --renders ./models --out seats.yaml [--only Residential/Object/Sofa_B]...
+arena-assets semantic seats apply seats.yaml ./dataset [--overwrite]
+```
+
+`propose` first asks which objects are for sitting, by asset path and description in batches of 50, unless `--only` names the assets. For each of them it sends the top-down and perspective previews of a build with `-o previews` and the worked example [seats_example.yaml](src/arena_assets/semantic/seats_example.yaml), asks `--samples` times (default 3) and keeps the slot count most answers agree on, the median box of matched slots and the facings most answers name. The example object is asked without its own example. It prints the tokens used and merges each object's proposal into `--out` as soon as it has it, keeping the objects already there. It stops at the first object whose samples all fail, the proposals so far kept. `apply` writes reviewed proposals into the source annotations, skipping objects that already have `sit` slots unless `--overwrite`, with which an empty list removes them. It checks every proposal before writing any file.
 
 ### Sound assets
 
