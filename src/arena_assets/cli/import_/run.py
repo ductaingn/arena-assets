@@ -47,6 +47,11 @@ def _list_sources(as_json: bool, kind: str | None = None) -> None:
         print("  ".join(str(cell).ljust(width) for cell, width in zip(row, widths, strict=False)) + f"  {row[-1]}")
 
 
+def _fail(message: str) -> typer.Exit:
+    typer.echo(f"arena-assets import: {message}", err=True)
+    return typer.Exit(1)
+
+
 def _elsewhere(source: str) -> str:
     from arena_assets.importers import IMPORTERS
 
@@ -59,7 +64,7 @@ def import_command(
     kind: str | None = typer.Argument(None, help="Kind of item to import, bare lists every kind and source"),
     source: str | None = typer.Argument(None, help="Upstream dataset of that kind, bare with KIND lists them"),
     items: list[str] = typer.Argument(None, help="Upstream item ids, bare with KIND SOURCE lists them"),
-    all_: bool = typer.Option(False, "--all", help="Import every item the source lists", is_flag=True),
+    all_: bool = typer.Option(False, "--all", help="Import every item the source lists, logging and skipping a failed one, exit 1 if any failed", is_flag=True),
     out: Path | None = typer.Option(None, "--out", "-o", help="Target root, default the imported root the resolvers read (shown by a bare import KIND SOURCE)"),
     cache: Path | None = typer.Option(None, "--cache", help="Download cache, default $ARENA_ASSETS_DIR/.import/SOURCE, else under the system temp dir"),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable source listing", is_flag=True),
@@ -72,7 +77,7 @@ def import_command(
     target. Each imported item lands under OUT/<relpath> with an ATTRIBUTION.yaml, and its
     path is printed.
     """
-    from arena_assets.importers import IMPORTERS
+    from arena_assets.importers import IMPORTERS, ITEM_ERRORS, reason
 
     if kind is None:
         _list_sources(as_json)
@@ -101,13 +106,28 @@ def import_command(
         return
 
     out = out if out is not None else _default_out(importer_class)
-    names = importer.items() if all_ else items
-    for item in names:
+    if all_:
+        try:
+            names = list(importer.items())
+            safe_echo(f"Importing {len(names)} {kind} item(s) from {source}", ctx)
+            imported = importer.import_items(names, out)
+        except ITEM_ERRORS as error:
+            raise _fail(f"{kind} {source}: {reason(error)}") from error
+        for path in imported.values():
+            print(path)
+        failed = len([item for item in names if item not in imported])
+        if failed:
+            raise _fail(f"imported {len(imported)} {kind} item(s) from {source}, {failed} failed, the warnings above name them")
+        safe_echo(f"Imported {len(imported)} {kind} item(s) from {source}", ctx)
+        return
+    for item in items:
         safe_echo(f"Importing {kind} {source} {item}", ctx)
         try:
             print(importer.import_item(item, out))
         except (KeyError, ValueError) as error:
-            raise typer.BadParameter(str(error.args[0]) if error.args else repr(error), param_hint="ITEM") from error
+            raise typer.BadParameter(reason(error), param_hint="ITEM") from error
+        except ITEM_ERRORS as error:
+            raise _fail(f"{kind} {source} {item}: {reason(error)}") from error
 
 
 def add_to_cmd(cmd: typer.Typer):

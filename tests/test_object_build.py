@@ -99,6 +99,29 @@ def test_build_keeps_usd_source_upright(blender, tmp_path, up_axis):
     assert _flat(_loaded_box(dest / "box.fbx")) == pytest.approx(_flat(UPRIGHT_BOX), abs=1e-3)
 
 
+def test_an_entity_failing_before_its_save_leaves_no_scene_for_the_next(blender, tmp_path):
+    from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectDatabaseBuilder
+
+    input_path = tmp_path / "input"
+    output_path = tmp_path / "output"
+    aside = input_path / "Object" / "aside"
+    aside.mkdir(parents=True)
+    (aside / "aside.usda").write_text(_usda_box("Z", extents=((1.0, 4.0), (-1.0, 1.0), (0.0, 1.0))))
+    (aside / ANNOTATION_NAME).write_text(yaml.safe_dump({"desc": "box beside the origin"}))
+    _write_box_source(input_path / "Object" / "box")
+    builder = ObjectDatabaseBuilder(input_path, output_path)
+    builder.enable("formats", "fbx")
+    blocked = output_path / "Object" / "aside"
+    blocked.parent.mkdir(parents=True)
+    blocked.write_text("not a directory")
+    assert builder.process_entity(builder.read_annotation_file(aside), blocked) is None
+    dest = output_path / "Object" / "box"
+    dest.mkdir(parents=True)
+    built = builder.process_entity(builder.read_annotation_file(input_path / "Object" / "box"), dest)
+    assert built is not None
+    assert built.bounding_box == UPRIGHT_BOX
+
+
 GLB_BUILD_SCRIPT = """
 import sys
 from pathlib import Path

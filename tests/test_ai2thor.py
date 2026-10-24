@@ -151,6 +151,27 @@ def test_reconvert_replaces_the_item(blender, tmp_path):
     assert (out / RELPATH / f"{ITEM}.usdz").is_file()
 
 
+def test_a_failed_rebuild_keeps_the_item(blender, tmp_path):
+    src = seed(tmp_path)
+    out = convert(tmp_path)
+    kept = out / RELPATH / "kept.txt"
+    kept.write_text("x")
+    src.write_bytes(b"not a glb")
+    with pytest.raises(RuntimeError, match=f"object build failed for {ITEM}"):
+        importer(tmp_path).convert(ITEM, src, out)
+    assert kept.is_file()
+    assert (out / RELPATH / f"{ITEM}.usdz").is_file()
+    assert sorted(path.name for path in (out / RELPATH).parent.iterdir()) == [ITEM]
+    assert Database(out / "Common" / DATABASE_NAME).list_all("object")["ids"] == [f"Object/{ITEM}"]
+
+
+def test_a_failed_stage_leaves_no_stage_directory(tmp_path):
+    seed(tmp_path)
+    with pytest.raises(FileNotFoundError):
+        importer(tmp_path).build({ITEM: tmp_path / "missing.glb"}, tmp_path / "ai2thor")
+    assert not list((tmp_path / "cache").glob("stage-*"))
+
+
 def test_import_items_builds_and_attributes_each_item(blender, tmp_path):
     seed(tmp_path)
     out = tmp_path / "ai2thor"

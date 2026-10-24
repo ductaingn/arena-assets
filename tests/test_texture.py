@@ -10,6 +10,8 @@ from PIL import Image
 from arena_assets.impl import ANNOTATION_NAME
 from arena_assets.utils.texture import MAX_TEXTURE_PX, limit_image, limit_images
 
+BOMB_SIDE = 13400
+
 
 def _chunk(kind: bytes, body: bytes) -> bytes:
     return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
@@ -26,6 +28,12 @@ def test_an_oversized_image_fits_the_longer_side_in_its_own_format(tmp_path):
     assert limit_image(jpeg, 2048) == ((4096, 1024), (2048, 512))
     with Image.open(jpeg) as image:
         assert (image.format, image.size) == ("JPEG", (2048, 512))
+
+
+def test_an_image_past_the_decompression_bomb_limit_is_fit_too(tmp_path):
+    png = tmp_path / "huge.png"
+    Image.new("1", (BOMB_SIDE, BOMB_SIDE)).save(png)
+    assert limit_image(png, MAX_TEXTURE_PX) == ((BOMB_SIDE, BOMB_SIDE), (MAX_TEXTURE_PX, MAX_TEXTURE_PX))
 
 
 def test_a_small_8_bit_image_is_left_as_it_is(tmp_path):

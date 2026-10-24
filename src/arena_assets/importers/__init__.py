@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import abc
 import enum
+import http.client
 import importlib
 import json
 import logging
@@ -17,12 +18,14 @@ import attrs
 import yaml
 
 from arena_assets.importers.providers import TRANSPORT_ERRORS, Provider
+from arena_assets.utils.ModelConverter import BlenderUnavailable
 
 logger = logging.getLogger(__name__)
 
 ATTRIBUTION_FILE = "ATTRIBUTION.yaml"
 LISTING_FILE = "items.{kind}.json"
 LISTING_TTL_S = 24 * 3600.0
+ITEM_ERRORS = (KeyError, ValueError, RuntimeError, OSError, http.client.HTTPException)
 
 
 class License(enum.Enum):
@@ -156,6 +159,24 @@ class Importer(abc.ABC):
         target = out / relpath
         write_attribution(target / ATTRIBUTION_FILE, self.attribution(item))
         return target
+
+    def import_items(self, items: Iterable[str], out: Path) -> dict[str, Path]:
+        """Import each item, a failed one logged and skipped."""
+        imported: dict[str, Path] = {}
+        for item in items:
+            try:
+                imported[item] = self.import_item(item, out)
+            except BlenderUnavailable:
+                raise
+            except ITEM_ERRORS as error:
+                logger.warning("%s %s %s failed: %s", self.meta.kind, self.meta.name, item, reason(error))
+        return imported
+
+
+def reason(error: Exception) -> str:
+    """First line of an error's message, a KeyError's without the quotes."""
+    text = (str(error.args[0]) if isinstance(error, KeyError) and error.args else str(error)).strip()
+    return text.splitlines()[0] if text else repr(error)
 
 
 def import_root() -> Path:

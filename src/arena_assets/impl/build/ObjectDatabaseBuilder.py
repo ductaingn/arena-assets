@@ -327,12 +327,12 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
     _annotation_cls = ObjectAnnotation
     _DISCOVER_PATH = "Object"
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, blender: BlenderWorker | None = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
         self._formats: set[str] = {"usdz", "fbx", "obj"}
         self._usd_baker: UsdBaker | None = None
-        self._blender = BlenderWorker()
+        self._blender = blender if blender is not None else BlenderWorker()
         if self._overwrite != OverwriteMode.ANNOTATIONS_ONLY:
             self._pre.append(self._blender.start)
             self._pre.append(self._resolve_formats)
@@ -422,26 +422,26 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
                 logger.info("Baked USD model %s to %s", input_file, baked_usd_path)
                 input_file = baked_usd_path
 
-            scan = self._blender.run([("load", str(input_file)), ("rectify",), ("bounding_box",), ("lights",), ("remove_lights",), ("emissive_materials",), *([("triangles",)] if annotation.affordances else [])], keep=True)
-            try:
-                rectified = np.array(scan.values[1])
-                bounding_box = BoundingBox(scan.values[2]).round(4)
-                extracted = object_lights([SourceLight(**{key: tuple(value) if isinstance(value, list) else value for key, value in light.items()}) for light in scan.values[3]], [SourceMaterial(name=material["name"], center=tuple(material["center"])) for material in scan.values[5]])
-                steps: list[tuple] = [("prepare_glow", [light.glow for light in annotation.lights or extracted if light.glow is not None])]
-                if annotation.affordances:
-                    points, triangles = _mesh(scan.values[6])
-                    annotation.affordances = place_slots(annotation, points, triangles, bounding_box, recompute=self._recompute_affordances)
-            except Exception:
-                self._blender.run([])
-                raise
-            if self._previews_enabled:
-                steps.append(("render_perspective", str(dest / f"{annotation.name}_thumb.png"), {"resolution": (512, 512), "theta": math.radians(annotation.face.angle + 30)}))
-                steps.append(("render_topdown", str(dest / f"{annotation.name}_topdown.png"), {"resolution": (512, 512)}))
             textures = Path(tempfile.mkdtemp(prefix=".textures-", dir=dest))
-            if self._max_texture > 0:
-                steps.append(("limit_textures", self._max_texture, str(textures)))
-            steps.extend(("save", str(dest / f"{annotation.name}.{ext}")) for ext in sorted(self._formats))
             try:
+                scan = self._blender.run([("load", str(input_file)), ("rectify",), ("bounding_box",), ("lights",), ("remove_lights",), ("emissive_materials",), *([("triangles",)] if annotation.affordances else [])], keep=True)
+                try:
+                    rectified = np.array(scan.values[1])
+                    bounding_box = BoundingBox(scan.values[2]).round(4)
+                    extracted = object_lights([SourceLight(**{key: tuple(value) if isinstance(value, list) else value for key, value in light.items()}) for light in scan.values[3]], [SourceMaterial(name=material["name"], center=tuple(material["center"])) for material in scan.values[5]])
+                    steps: list[tuple] = [("prepare_glow", [light.glow for light in annotation.lights or extracted if light.glow is not None])]
+                    if annotation.affordances:
+                        points, triangles = _mesh(scan.values[6])
+                        annotation.affordances = place_slots(annotation, points, triangles, bounding_box, recompute=self._recompute_affordances)
+                    if self._previews_enabled:
+                        steps.append(("render_perspective", str(dest / f"{annotation.name}_thumb.png"), {"resolution": (512, 512), "theta": math.radians(annotation.face.angle + 30)}))
+                        steps.append(("render_topdown", str(dest / f"{annotation.name}_topdown.png"), {"resolution": (512, 512)}))
+                    if self._max_texture > 0:
+                        steps.append(("limit_textures", self._max_texture, str(textures)))
+                    steps.extend(("save", str(dest / f"{annotation.name}.{ext}")) for ext in sorted(self._formats))
+                except Exception:
+                    self._blender.run([])
+                    raise
                 result = self._blender.run(steps)
             finally:
                 shutil.rmtree(textures, ignore_errors=True)

@@ -140,6 +140,27 @@ def test_reconvert_replaces_the_item(blender, tmp_path):
     assert (out / RELPATH / f"{ITEM}.usdz").is_file()
 
 
+def test_a_failed_reconvert_keeps_the_item(blender, tmp_path):
+    out = convert(tmp_path)
+    kept = out / RELPATH / "kept.txt"
+    kept.write_text("x")
+    broken = tmp_path / "broken" / f"{ITEM}.zip"
+    broken.parent.mkdir()
+    with zipfile.ZipFile(broken, "w") as archive:
+        archive.writestr("model.config", "<model/>")
+    with pytest.raises(ValueError, match="has no model.sdf"):
+        importer(tmp_path).convert(ITEM, broken, out)
+    assert kept.is_file()
+    assert (out / RELPATH / f"{ITEM}.usdz").is_file()
+    assert sorted(path.name for path in (out / RELPATH).parent.iterdir()) == [ITEM]
+
+
+@pytest.mark.network
+def test_fetch_of_an_unknown_model_names_the_listing_command(tmp_path):
+    with pytest.raises(KeyError, match="no model 'No_Such_Model' of GoogleResearch on Fuel, list the items with: import object gso"):
+        importer(tmp_path).fetch("No_Such_Model")
+
+
 @pytest.mark.network
 def test_import_item_end_to_end(blender, tmp_path):
     target = importer(tmp_path).import_item(ITEM, tmp_path / "gso")

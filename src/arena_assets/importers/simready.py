@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from arena_assets.impl import ANNOTATION_NAME, AssetType
-from arena_assets.impl.build import DatabaseBuilder, OverwriteMode
+from arena_assets.impl.build import DatabaseBuilder, OverwriteMode, replacing
 from arena_assets.importers import IMPORTERS, Attribution, Importer
 from arena_assets.importers.gso import annotate
 from arena_assets.importers.providers import HFHub, Provider
@@ -120,23 +120,22 @@ class SimReady(Importer):
         if max(size[0], size[1]) > MAX_FOOTPRINT_M:
             raise ValueError(f"{item} is {size[0]:.2f} x {size[1]:.2f} m, the object builder rescales a footprint over {MAX_FOOTPRINT_M:g} m")
         target = out / DOMAIN / ASSET_TYPE / item
-        if target.exists():
-            shutil.rmtree(target)
         self.cache.mkdir(parents=True, exist_ok=True)
         dataset = Path(tempfile.mkdtemp(prefix="stage-", dir=self.cache))
         try:
-            source = dataset / DOMAIN / ASSET_TYPE / item
-            shutil.copytree(root.parent, source)
-            annotate(source / ANNOTATION_NAME, item, description(item), [ORIGIN, kind(item)], kind(item))
-            builder = DatabaseBuilder.Builder(AssetType.OBJECT)(input_path=dataset / DOMAIN, output_path=out / DOMAIN, overwrite=OverwriteMode.OVERWRITE)
-            builder.enable("formats", FORMATS)
-            builder.enable("previews")
-            builder.build()
+            with replacing(target):
+                source = dataset / DOMAIN / ASSET_TYPE / item
+                shutil.copytree(root.parent, source)
+                annotate(source / ANNOTATION_NAME, item, description(item), [ORIGIN, kind(item)], kind(item))
+                builder = DatabaseBuilder.Builder(AssetType.OBJECT)(input_path=dataset / DOMAIN, output_path=out / DOMAIN, overwrite=OverwriteMode.OVERWRITE)
+                builder.enable("formats", FORMATS)
+                builder.enable("previews")
+                builder.build()
+                if not (target / ANNOTATION_NAME).is_file():
+                    raise RuntimeError(f"object build failed for {item}, the build log above names the step")
+                self.keep(src, root.parent, target / KEPT)
         finally:
             shutil.rmtree(dataset)
-        if not (target / ANNOTATION_NAME).is_file():
-            raise RuntimeError(f"object build failed for {item}, the build log above names the step")
-        self.keep(src, root.parent, target / KEPT)
         return str(Path(DOMAIN) / ASSET_TYPE / item)
 
     @staticmethod

@@ -261,7 +261,7 @@ class ModelConverter:
         )
 
     def limit_textures(self, max_px: int, directory: str) -> list[TextureLimit]:
-        """Fit every image texture into max_px on its longer side and store 16-bit ones with 8 bits per channel, as files in directory, repacked when they came packed."""
+        """Fit every image texture into max_px with 8 bits per channel as files in directory, repacking packed ones."""
         out = Path(directory)
         out.mkdir(parents=True, exist_ok=True)
         changed: list[TextureLimit] = []

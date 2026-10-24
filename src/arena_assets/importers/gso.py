@@ -9,6 +9,7 @@ import posixpath
 import re
 import shutil
 import typing
+import urllib.error
 import xml.etree.ElementTree as ET
 import zipfile
 from collections.abc import Iterator
@@ -18,7 +19,7 @@ import attrs
 import yaml
 
 from arena_assets.impl import ANNOTATION_NAME, AssetType
-from arena_assets.impl.build import DatabaseBuilder, OverwriteMode
+from arena_assets.impl.build import DatabaseBuilder, OverwriteMode, replacing
 from arena_assets.importers import IMPORTERS, Attribution, Importer
 from arena_assets.importers.providers import Fuel
 from arena_assets.semantic import fixes
@@ -110,26 +111,32 @@ class FuelObjects(Importer):
 
     def fetch(self, item: str) -> Path:
         name = self.model(item)
-        self.provider.get(name, self.cache / f"{item}.json")
+        try:
+            self.provider.get(name, self.cache / f"{item}.json")
+        except urllib.error.HTTPError as error:
+            if error.code != 404:
+                raise
+            raise KeyError(f"no model '{item}' of {self.OWNER} on Fuel, list the items with: import object {self.meta.name}") from None
         return self.provider.get(f"{name}/{VERSION}/{name}.zip", self.cache / f"{item}.zip")
 
     def convert(self, item: str, src: Path, out: Path) -> str:
         name = self.asset(item)
         relpath = Path(DOMAIN) / ASSET_TYPE / name
         target = out / relpath
-        if target.exists():
-            shutil.rmtree(target)
         dataset = self.cache / "stage" / name
+        worker = BlenderWorker()
         try:
-            measured(self.stage(name, src, dataset), name)
-            builder = DatabaseBuilder.Builder(AssetType.OBJECT)(input_path=dataset / DOMAIN, output_path=out / DOMAIN, overwrite=OverwriteMode.OVERWRITE)
-            builder.enable("formats", FORMATS)
-            builder.enable("previews")
-            builder.build()
+            with replacing(target):
+                measured(self.stage(name, src, dataset), name, worker)
+                builder = DatabaseBuilder.Builder(AssetType.OBJECT)(input_path=dataset / DOMAIN, output_path=out / DOMAIN, overwrite=OverwriteMode.OVERWRITE, blender=worker)
+                builder.enable("formats", FORMATS)
+                builder.enable("previews")
+                builder.build()
+                if not (target / ANNOTATION_NAME).is_file():
+                    raise RuntimeError(f"object build failed for {name}, the build log above names the step")
         finally:
+            worker.close()
             shutil.rmtree(dataset, ignore_errors=True)
-        if not (target / ANNOTATION_NAME).is_file():
-            raise RuntimeError(f"object build failed for {name}, the build log above names the step")
         return str(relpath)
 
     def attribution(self, item: str) -> Attribution:
@@ -198,14 +205,10 @@ def shown(archive: zipfile.ZipFile, item: str) -> Visual:
     return attrs.evolve(visual, albedo=albedo) if len(albedos) == 1 and albedo in names else visual
 
 
-def measured(source: Path, item: str) -> None:
+def measured(source: Path, item: str, worker: BlenderWorker) -> None:
     """Refuse a staged model the builder's converter loads empty or rescales."""
     mesh = next(path for path in sorted(source.rglob("*")) if path.suffix in MESHES)
-    worker = BlenderWorker()
-    try:
-        values = worker.run([("load", str(mesh)), ("bounding_box",), ("rectify",), ("bounding_box",)]).values
-    finally:
-        worker.close()
+    values = worker.run([("load", str(mesh)), ("bounding_box",), ("rectify",), ("bounding_box",)]).values
     loaded = [high - low for low, high in values[1]]
     built = [high - low for low, high in values[3]]
     if not any(loaded):

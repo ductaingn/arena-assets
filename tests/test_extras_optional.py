@@ -8,7 +8,7 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 SCRIPT = """
 import sys
 
-for name in ("chromadb", "bpy", "mathutils", "numpy", "scipy"):
+for name in ("chromadb", "bpy", "mathutils", "scipy"):
     sys.modules[name] = None
 
 import arena_assets

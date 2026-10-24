@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 from pathlib import Path
 
 import attrs
@@ -236,6 +237,15 @@ def test_hfhub_token_header(tmp_path):
     assert req.get_header("Authorization") == "Bearer tok"
     empty = _hf_home(tmp_path, None)
     assert _authorization({"HF_HOME": str(empty), "HOME": str(tmp_path)}) == "none"
+
+
+def test_hfhub_token_stays_off_a_redirect_to_another_host(host, tmp_path):
+    hub = HFHub("org/data", token="tok", host=host.base)
+    resolve = urllib.parse.urlsplit(hub.url("data/file.bin")).path
+    host.redirects[resolve] = f"http://localhost:{host.server_address[1]}/cdn/file.bin"
+    host.pages["/cdn/file.bin"] = b"payload"
+    assert hub.get("data/file.bin", tmp_path / "file.bin").read_bytes() == b"payload"
+    assert host.authorizations == {resolve: "Bearer tok", "/cdn/file.bin": None}
 
 
 def test_hfhub_reads_the_token_file_under_hf_home(tmp_path):

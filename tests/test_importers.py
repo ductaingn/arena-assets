@@ -30,6 +30,8 @@ from arena_assets.importers import (
     write_attribution,
     write_listing,
 )
+from arena_assets.impl import ANNOTATION_NAME
+from arena_assets.impl.build import replacing
 from arena_assets.importers.providers import Http
 
 
@@ -265,3 +267,43 @@ def test_unreadable_item_list_counts_as_missing(tmp_path):
     assert read_listing(path) is None
     path.write_text(json.dumps({"items": ["a"]}))
     assert read_listing(path) is None
+
+
+def _built(root: Path, name: str, annotation: str) -> Path:
+    item = root / "Object" / name
+    item.mkdir(parents=True)
+    (item / ANNOTATION_NAME).write_text(annotation)
+    return item
+
+
+def _listed(root: Path) -> list[str]:
+    return sorted(path.name for path in (root / "Object").iterdir())
+
+
+def test_replacing_keeps_the_rebuilt_item_and_drops_the_old_one(tmp_path):
+    chair = _built(tmp_path, "chair", "old")
+    with replacing(chair):
+        assert not chair.exists()
+        _built(tmp_path, "chair", "new")
+    assert (chair / ANNOTATION_NAME).read_text() == "new"
+    assert _listed(tmp_path) == ["chair"]
+
+
+def test_replacing_restores_an_item_rebuilt_without_an_annotation(tmp_path):
+    chair = _built(tmp_path, "chair", "old")
+    with replacing(chair):
+        chair.mkdir()
+        (chair / "chair.usdz").write_text("partial")
+    assert sorted(path.name for path in chair.iterdir()) == [ANNOTATION_NAME]
+    assert (chair / ANNOTATION_NAME).read_text() == "old"
+    assert _listed(tmp_path) == ["chair"]
+
+
+def test_replacing_restores_every_item_when_the_rebuild_raises(tmp_path):
+    chair = _built(tmp_path, "chair", "old chair")
+    table = _built(tmp_path, "table", "old table")
+    with pytest.raises(RuntimeError, match="build failed"), replacing(chair, table, tmp_path / "Object" / "lamp"):
+        _built(tmp_path, "chair", "new chair")
+        raise RuntimeError("build failed")
+    assert [(item / ANNOTATION_NAME).read_text() for item in (chair, table)] == ["old chair", "old table"]
+    assert _listed(tmp_path) == ["chair", "table"]

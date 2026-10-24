@@ -38,7 +38,7 @@ class Scene:
         self._reported = (0, 0)
 
     def run(self, steps: list[list], keep: bool = False) -> dict:
-        """Run converter operations in order, each step is [operation, *args] with an optional trailing kwargs dict, in a fresh scene unless the last request kept its own."""
+        """Run [operation, *args, kwargs?] steps in order, in a fresh scene unless the last request kept its own."""
         from .converter import ModelConverter
 
         if self._converter is None:

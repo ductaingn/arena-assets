@@ -8,6 +8,8 @@ from PIL import Image, UnidentifiedImageError
 MAX_TEXTURE_PX = 2048
 SUFFIXES = (".png", ".jpg", ".jpeg", ".tga", ".bmp", ".tif", ".tiff")
 
+Image.MAX_IMAGE_PIXELS = None
+
 
 def _sixteen_bit_png(path: Path) -> bool:
     with open(path, "rb") as f:
@@ -16,7 +18,7 @@ def _sixteen_bit_png(path: Path) -> bool:
 
 
 def limit_image(path: Path, max_px: int) -> tuple[tuple[int, int], tuple[int, int]] | None:
-    """Fit an image file into max_px on its longer side with 8 bits per channel, in place and in its own format, its size before and after when it changed, None for a file left as it is."""
+    """Fit an image file into max_px with 8 bits per channel in place, its sizes before and after, None if left as it is."""
     try:
         opened = Image.open(path)
     except UnidentifiedImageError:

@@ -14,8 +14,8 @@ from pathlib import Path
 import yaml
 
 from arena_assets.impl import ANNOTATION_NAME, AssetType
-from arena_assets.impl.build import DatabaseBuilder, OverwriteMode
-from arena_assets.importers import ATTRIBUTION_FILE, IMPORTERS, Attribution, Importer, write_attribution
+from arena_assets.impl.build import DatabaseBuilder, OverwriteMode, replacing
+from arena_assets.importers import ATTRIBUTION_FILE, IMPORTERS, ITEM_ERRORS, Attribution, Importer, reason, write_attribution
 from arena_assets.importers.providers import HFHub, Http, Provider
 from arena_assets.semantic import fixes
 from arena_assets.semantic.taxonomy import load_spec
@@ -146,31 +146,29 @@ class AI2THOR(Importer):
         """Build every staged item in one builder run and return the relpaths of those that built."""
         self.cache.mkdir(parents=True, exist_ok=True)
         dataset = Path(tempfile.mkdtemp(prefix="stage-", dir=self.cache))
-        for item, src in sources.items():
-            target = out / DOMAIN / ASSET_TYPE / item
-            if target.exists():
-                shutil.rmtree(target)
-            stage(item, src, dataset, self.object_type(item))
-        builder = DatabaseBuilder.Builder(AssetType.OBJECT)(input_path=dataset / DOMAIN, output_path=out / DOMAIN, overwrite=OverwriteMode.OVERWRITE)
-        builder.enable("formats", FORMATS)
-        builder.enable("previews")
         try:
-            builder.build()
+            with replacing(*(out / DOMAIN / ASSET_TYPE / item for item in sources)):
+                for item, src in sources.items():
+                    stage(item, src, dataset, self.object_type(item))
+                builder = DatabaseBuilder.Builder(AssetType.OBJECT)(input_path=dataset / DOMAIN, output_path=out / DOMAIN, overwrite=OverwriteMode.OVERWRITE)
+                builder.enable("formats", FORMATS)
+                builder.enable("previews")
+                builder.build()
+                return {item: str(Path(DOMAIN) / ASSET_TYPE / item) for item in sources if (out / DOMAIN / ASSET_TYPE / item / ANNOTATION_NAME).is_file()}
         finally:
             shutil.rmtree(dataset)
-        return {item: str(Path(DOMAIN) / ASSET_TYPE / item) for item in sources if (out / DOMAIN / ASSET_TYPE / item / ANNOTATION_NAME).is_file()}
 
     def import_items(self, items: Iterable[str], out: Path) -> dict[str, Path]:
-        """Fetch, build and attribute several items with one builder run, skipping those the source does not hold."""
+        """Fetch, build and attribute several items with one builder run, a failed one logged and skipped."""
         sources: dict[str, Path] = {}
         for item in items:
             try:
                 sources[item] = self.fetch(item)
-            except KeyError as e:
-                logger.warning("%s", e.args[0])
+            except ITEM_ERRORS as error:
+                logger.warning("%s %s %s failed: %s", self.meta.kind, self.meta.name, item, reason(error))
         built = self.build(sources, out) if sources else {}
         for item in sorted(set(sources) - set(built)):
-            logger.warning("object build failed for %s", item)
+            logger.warning("%s %s %s failed: the object build failed, the build log above names the step", self.meta.kind, self.meta.name, item)
         for item, relpath in built.items():
             write_attribution(out / relpath / ATTRIBUTION_FILE, self.attribution(item))
         return {item: out / relpath for item, relpath in built.items()}

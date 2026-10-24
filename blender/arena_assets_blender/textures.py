@@ -8,6 +8,8 @@ from PIL import Image
 
 JPEG_QUALITY = 90
 
+Image.MAX_IMAGE_PIXELS = None
+
 
 @dataclasses.dataclass
 class TextureLimit:
@@ -19,7 +21,7 @@ class TextureLimit:
 
 
 def limited(data: bytes, max_px: int) -> tuple[bytes, str, tuple[int, int], tuple[int, int]]:
-    """An image fit into max_px on its longer side with 8 bits per channel, as JPEG unless it uses its alpha and as PNG then, with its format and its size before and after."""
+    """An image fit into max_px with 8 bits per channel, PNG if it uses its alpha else JPEG, with format and sizes."""
     with Image.open(io.BytesIO(data)) as image:
         image.load()
         size = image.size

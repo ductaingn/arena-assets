@@ -87,3 +87,12 @@ def test_an_opaque_rgba_image_drops_its_alpha_and_becomes_jpeg():
     Image.new("RGBA", (4096, 4), (10, 20, 30, 255)).save(data, format="PNG")
     encoded, image_format, _, after = limited(data.getvalue(), 2048)
     assert (image_format, after, Image.open(io.BytesIO(encoded)).mode) == ("JPEG", (2048, 2), "RGB")
+
+
+def test_an_image_past_the_decompression_bomb_limit_is_fit_too():
+    from arena_assets_blender.textures import limited
+
+    data = io.BytesIO()
+    Image.new("L", (13400, 13400)).save(data, format="PNG")
+    _, image_format, before, after = limited(data.getvalue(), 2048)
+    assert (image_format, before, after) == ("JPEG", (13400, 13400), (2048, 2048))

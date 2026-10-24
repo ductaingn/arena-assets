@@ -12,7 +12,7 @@ import attrs
 import yaml
 
 from arena_assets.impl import ANNOTATION_NAME, AssetType
-from arena_assets.impl.build import DatabaseBuilder, OverwriteMode
+from arena_assets.impl.build import DatabaseBuilder, OverwriteMode, replacing
 from arena_assets.importers import Attribution, Importer
 from arena_assets.semantic import fixes
 from arena_assets.semantic.taxonomy import load_spec
@@ -29,7 +29,7 @@ _IDENTIFIER = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
 
 @attrs.frozen
 class Maps:
-    """Files of one texture set: sRGB color, OpenGL normal, linear roughness, metalness and occlusion, orm packing occlusion, roughness and metalness as R, G and B."""
+    """Texture set files: sRGB color, OpenGL normal, linear rest, orm as occlusion, roughness, metalness in RGB."""
 
     color: Path
     roughness: Path | None = None
@@ -131,16 +131,15 @@ class MaterialImporter(Importer):
         name = self.asset(item)
         relpath = Path(DOMAIN) / ASSET_TYPE / name
         target = out / relpath
-        if target.exists():
-            shutil.rmtree(target)
         dataset = self.cache / "stage" / name
         try:
-            stage(name, self.maps(item, src), self.description(item), [self.ORIGIN, *self.labels(item)], dataset)
-            DatabaseBuilder.Builder(AssetType.MATERIAL)(input_path=dataset / DOMAIN, output_path=out / DOMAIN, overwrite=OverwriteMode.OVERWRITE).build()
+            with replacing(target):
+                stage(name, self.maps(item, src), self.description(item), [self.ORIGIN, *self.labels(item)], dataset)
+                DatabaseBuilder.Builder(AssetType.MATERIAL)(input_path=dataset / DOMAIN, output_path=out / DOMAIN, overwrite=OverwriteMode.OVERWRITE).build()
+                if not (target / ANNOTATION_NAME).is_file():
+                    raise RuntimeError(f"material build failed for {name}, the build log above names the step")
         finally:
             shutil.rmtree(dataset, ignore_errors=True)
-        if not (target / ANNOTATION_NAME).is_file():
-            raise RuntimeError(f"material build failed for {name}, the build log above names the step")
         return str(relpath)
 
     def attribution(self, item: str) -> Attribution:

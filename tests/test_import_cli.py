@@ -1,5 +1,7 @@
+import io
 import json
 import shutil
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -7,10 +9,15 @@ from typer.testing import CliRunner
 
 from arena_assets.__main__ import app
 from arena_assets.importers import ATTRIBUTION_FILE, IMPORTERS
+from arena_assets.importers.ai2thor import ARCHIVE, MEMBERS, TYPES
 
 ITEM = "Jawbone_UP24_Wireless_Activity_Tracker_Pink_Coral_L"
 FIXTURE = Path(__file__).parent / "fixtures" / "gso" / f"{ITEM}.zip"
 RELPATH = Path("Common") / "Object" / ITEM
+THOR_ITEM = "Dining_Table_203_1"
+THOR_FIXTURE = Path(__file__).parent / "fixtures" / "ai2thor" / f"{THOR_ITEM}.glb"
+THOR_BROKEN = "Broken_Table_1"
+NO_BLENDER = {"ARENA_ASSETS_BLENDER": "/nonexistent/arena-assets-blender"}
 
 runner = CliRunner()
 
@@ -19,6 +26,22 @@ def seed(cache: Path) -> None:
     cache.mkdir(parents=True, exist_ok=True)
     shutil.copy(FIXTURE, cache / f"{ITEM}.zip")
     (cache / f"{ITEM}.json").write_text(json.dumps({"name": ITEM, "categories": ["Consumer Goods"]}))
+
+
+def seed_ai2thor(cache: Path) -> None:
+    """An AI2-THOR cache listing a good and a broken object, both fetched, so --all runs offline."""
+    body = io.BytesIO()
+    with zipfile.ZipFile(body, "w") as archive:
+        for item in (THOR_ITEM, THOR_BROKEN):
+            archive.writestr(f"{MEMBERS}{item}.glb", b"")
+    data = body.getvalue()
+    start = zipfile.ZipFile(io.BytesIO(data)).start_dir
+    (cache / "objects").mkdir(parents=True)
+    (cache / f"{ARCHIVE}.directory.json").write_text(json.dumps({"start": start, "size": len(data)}))
+    (cache / f"{ARCHIVE}.directory").write_bytes(data[start:])
+    shutil.copy(THOR_FIXTURE, cache / "objects" / f"{THOR_ITEM}.glb")
+    (cache / "objects" / f"{THOR_BROKEN}.glb").write_bytes(b"not a glb")
+    (cache / TYPES).write_text(json.dumps({"DiningTable": [{"assetId": THOR_ITEM, "objectType": "DiningTable"}]}))
 
 
 def test_bare_import_lists_the_registry():
@@ -97,6 +120,39 @@ def test_import_from_seeded_cache_writes_item_and_attribution(blender, tmp_path)
     assert result.output.strip() == str(target)
     assert (target / ATTRIBUTION_FILE).is_file()
     assert (target / f"{ITEM}.usdz").is_file()
+
+
+def test_an_item_failing_past_its_fetch_is_a_one_line_error(tmp_path):
+    cache = tmp_path / "cache"
+    seed(cache)
+    result = runner.invoke(app, ["import", "object", "gso", ITEM, "--out", str(tmp_path / "out"), "--cache", str(cache)], env=NO_BLENDER)
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert f"arena-assets import: object gso {ITEM}: cannot run the Blender worker" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_import_all_imports_what_it_can_and_counts_the_failed_items(blender, tmp_path):
+    cache = tmp_path / "cache"
+    seed_ai2thor(cache)
+    out = tmp_path / "out"
+    result = runner.invoke(app, ["import", "object", "ai2thor", "--all", "--out", str(out), "--cache", str(cache)])
+    assert result.exit_code == 1, result.output
+    assert str(out / "Common" / "Object" / THOR_ITEM) in result.output.splitlines()
+    assert "arena-assets import: imported 1 object item(s) from ai2thor, 1 failed, the warnings above name them" in result.output
+    assert f"object ai2thor {THOR_BROKEN} failed" in result.output
+    assert (out / "Common" / "Object" / THOR_ITEM / ATTRIBUTION_FILE).is_file()
+    assert not (out / "Common" / "Object" / THOR_BROKEN).exists()
+
+
+def test_import_all_without_a_blender_worker_is_a_one_line_error(tmp_path):
+    cache = tmp_path / "cache"
+    seed_ai2thor(cache)
+    result = runner.invoke(app, ["import", "object", "ai2thor", "--all", "--out", str(tmp_path / "out"), "--cache", str(cache)], env=NO_BLENDER)
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "arena-assets import: object ai2thor: cannot run the Blender worker" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_out_defaults_to_the_imported_root_and_cache_to_the_assets_dir(blender, tmp_path):

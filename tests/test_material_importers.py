@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import urllib.parse
 import zipfile
 from pathlib import Path
@@ -157,6 +158,45 @@ def test_polyhaven_reimport_downloads_nothing_and_replaces_the_item(host, tmp_pa
     importer.import_item(PLANKS, out)
     assert len(host.served) == served
     assert not stale.exists()
+
+
+def test_polyhaven_failed_reimport_keeps_the_item(host, tmp_path):
+    importer = polyhaven(host, tmp_path)
+    out = tmp_path / "out"
+    target = importer.import_item(PLANKS, out)
+    kept = target / "kept.txt"
+    kept.write_text("x")
+    next((tmp_path / "cache" / PLANKS).glob("color.*")).unlink()
+    with pytest.raises(FileNotFoundError):
+        importer.convert(PLANKS, tmp_path / "cache" / PLANKS, out)
+    assert kept.is_file()
+    assert (target / ANNOTATION_NAME).is_file()
+    assert sorted(path.name for path in target.parent.iterdir()) == [PLANKS]
+
+
+class Warnings(logging.Handler):
+    def __init__(self):
+        super().__init__(logging.WARNING)
+        self.seen: list[str] = []
+
+    def emit(self, record: logging.LogRecord):
+        self.seen.append(record.getMessage())
+
+
+def test_import_items_imports_each_item_and_logs_the_failed_one(host, tmp_path):
+    out = tmp_path / "out"
+    warnings = Warnings()
+    importers = logging.getLogger("arena_assets.importers")
+    level = importers.level
+    importers.addHandler(warnings)
+    importers.setLevel(logging.WARNING)
+    try:
+        imported = polyhaven(host, tmp_path).import_items(["nope", PLANKS], out)
+    finally:
+        importers.setLevel(level)
+        importers.removeHandler(warnings)
+    assert imported == {PLANKS: out / "Common" / "Material" / PLANKS}
+    assert warnings.seen == ["material polyhaven nope failed: no texture 'nope' on Poly Haven, list the items with: import material polyhaven"]
 
 
 def test_polyhaven_without_a_packed_map_binds_the_separate_ones(host, tmp_path):

@@ -138,7 +138,7 @@ class HFHub(Provider):
     def _request(self, url: str, **kwargs: typing.Any) -> urllib.request.Request:
         req = super()._request(url, **kwargs)
         if self.token:
-            req.add_header("Authorization", f"Bearer {self.token}")
+            req.add_unredirected_header("Authorization", f"Bearer {self.token}")
         return req
 
     @property
