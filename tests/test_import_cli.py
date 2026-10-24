@@ -178,3 +178,11 @@ def test_bare_source_listing_caches_the_items_for_completion(tmp_path):
     cached = json.loads((tmp_path / "items.world.json").read_text())
     assert cached["items"] == [str(index) for index in range(300)]
     assert cached["expires_at"] is None
+
+
+def test_source_listing_json_gives_the_items_and_the_target(tmp_path):
+    pytest.importorskip("arena_simulation_setup.adapters.barn")
+    result = runner.invoke(app, ["-s", "import", "world", "barn", "--cache", str(tmp_path), "--json"], env={"ARENA_ASSETS_DIR_IMPORTED": str(tmp_path / "imported")})
+    assert result.exit_code == 0, result.output
+    listed = json.loads(result.output)
+    assert listed == {"kind": "world", "source": "barn", "target": str(tmp_path / "imported" / "worlds"), "count": 300, "items": [str(index) for index in range(300)]}

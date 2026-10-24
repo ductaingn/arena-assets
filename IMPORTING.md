@@ -14,6 +14,8 @@ arena asset import world barn --all                  # every item of a source
 arena asset import object gso <item> --out ./gso     # another target root
 ```
 
+Over MCP, the `assets` domain offers the same: `assets_import_sources` lists the datasets, `assets_import_items` one dataset's item ids (with a glob and a limit), and `assets_import` converts chosen items as a job whose result lists the item paths. `--json` prints either listing as JSON.
+
 `arena asset import` is the Arena CLI front of `arena-assets import KIND SOURCE ITEM... [-o OUT]`, which works the same outside Arena. Tab completion of `arena asset import KIND SOURCE` offers the source's item ids.
 
 ## How an import works

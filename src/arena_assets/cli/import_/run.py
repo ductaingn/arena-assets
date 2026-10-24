@@ -67,7 +67,7 @@ def import_command(
     all_: bool = typer.Option(False, "--all", help="Import every item the source lists, logging and skipping a failed one, exit 1 if any failed", is_flag=True),
     out: Path | None = typer.Option(None, "--out", "-o", help="Target root, default the imported root the resolvers read (shown by a bare import KIND SOURCE)"),
     cache: Path | None = typer.Option(None, "--cache", help="Download cache, default $ARENA_ASSETS_DIR/.import/SOURCE, else under the system temp dir"),
-    as_json: bool = typer.Option(False, "--json", help="Machine-readable source listing", is_flag=True),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable source or item listing", is_flag=True),
 ):
     """Import items of one kind from an upstream dataset into the asset layout the resolvers read.
 
@@ -98,6 +98,10 @@ def import_command(
     importer = importer_class(cache=cache if cache is not None else _default_cache(source))
 
     if not items and not all_:
+        if as_json:
+            listed = importer.cached_items()
+            print(json.dumps({"kind": kind, "source": source, "target": _target_hint(importer_class), "count": len(listed), "items": listed}))
+            return
         count = 0
         for item in importer.cached_items():
             print(item)
