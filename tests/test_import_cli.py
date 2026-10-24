@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from arena_assets.__main__ import app
 from arena_assets.importers import ATTRIBUTION_FILE, IMPORTERS
 from arena_assets.importers.ai2thor import ARCHIVE, MEMBERS, TYPES
+from cli_output import plain
 
 ITEM = "Jawbone_UP24_Wireless_Activity_Tracker_Pink_Coral_L"
 FIXTURE = Path(__file__).parent / "fixtures" / "gso" / f"{ITEM}.zip"
@@ -74,40 +75,40 @@ def test_kind_alone_lists_its_sources():
 def test_unknown_kind_lists_the_kinds():
     result = runner.invoke(app, ["import", "nope", "x"])
     assert result.exit_code != 0
-    assert "no importer kind 'nope'" in result.output
+    assert "no importer kind 'nope'" in plain(result.output)
     assert all(kind in result.output for kind in IMPORTERS.kinds())
 
 
 def test_a_source_in_place_of_the_kind_names_the_command():
     result = runner.invoke(app, ["import", "gso", ITEM])
     assert result.exit_code != 0
-    assert "'gso' is a source of kind object: import object gso" in " ".join(result.output.replace("\u2502", " ").split())
+    assert "'gso' is a source of kind object: import object gso" in plain(result.output)
 
 
 def test_unknown_source_lists_the_sources_of_the_kind():
     result = runner.invoke(app, ["import", "object", "nope", "x", "--out", "/tmp/x", "--cache", "/tmp/x"])
     assert result.exit_code != 0
-    assert "no object importer 'nope'" in result.output
+    assert "no object importer 'nope'" in plain(result.output)
     assert all(name in result.output for name in IMPORTERS.names("object"))
 
 
 def test_a_source_under_the_wrong_kind_names_its_kinds():
     result = runner.invoke(app, ["import", "object", "barn", "0"])
     assert result.exit_code != 0
-    assert "'barn' is a source of kind suite and world: import suite barn" in " ".join(result.output.replace("\u2502", " ").split())
+    assert "'barn' is a source of kind suite and world: import suite barn" in plain(result.output)
 
 
 def test_items_and_all_are_refused(tmp_path):
     result = runner.invoke(app, ["import", "object", "gso", ITEM, "--all", "--out", str(tmp_path), "--cache", str(tmp_path)])
     assert result.exit_code != 0
-    assert "not both" in result.output
+    assert "not both" in plain(result.output)
 
 
 def test_out_default_needs_assets_dir(tmp_path):
     result = runner.invoke(app, ["import", "object", "gso", ITEM, "--cache", str(tmp_path)], env={"ARENA_ASSETS_DIR": None, "ARENA_ASSETS_DIR_IMPORTED": None})
     assert result.exit_code != 0
-    assert "ARENA_ASSETS_DIR" in result.output
-    assert "--out" in result.output
+    assert "ARENA_ASSETS_DIR" in plain(result.output)
+    assert "--out" in plain(result.output)
 
 
 def test_import_from_seeded_cache_writes_item_and_attribution(blender, tmp_path):
@@ -128,8 +129,8 @@ def test_an_item_failing_past_its_fetch_is_a_one_line_error(tmp_path):
     result = runner.invoke(app, ["import", "object", "gso", ITEM, "--out", str(tmp_path / "out"), "--cache", str(cache)], env=NO_BLENDER)
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
-    assert f"arena-assets import: object gso {ITEM}: cannot run the Blender worker" in result.output
-    assert "Traceback" not in result.output
+    assert f"arena-assets import: object gso {ITEM}: cannot run the Blender worker" in plain(result.output)
+    assert "Traceback" not in plain(result.output)
 
 
 def test_import_all_imports_what_it_can_and_counts_the_failed_items(blender, tmp_path):
@@ -139,8 +140,8 @@ def test_import_all_imports_what_it_can_and_counts_the_failed_items(blender, tmp
     result = runner.invoke(app, ["import", "object", "ai2thor", "--all", "--out", str(out), "--cache", str(cache)])
     assert result.exit_code == 1, result.output
     assert str(out / "Common" / "Object" / THOR_ITEM) in result.output.splitlines()
-    assert "arena-assets import: imported 1 object item(s) from ai2thor, 1 failed, the warnings above name them" in result.output
-    assert f"object ai2thor {THOR_BROKEN} failed" in result.output
+    assert "arena-assets import: imported 1 object item(s) from ai2thor, 1 failed, the warnings above name them" in plain(result.output)
+    assert f"object ai2thor {THOR_BROKEN} failed" in plain(result.output)
     assert (out / "Common" / "Object" / THOR_ITEM / ATTRIBUTION_FILE).is_file()
     assert not (out / "Common" / "Object" / THOR_BROKEN).exists()
 
@@ -151,8 +152,8 @@ def test_import_all_without_a_blender_worker_is_a_one_line_error(tmp_path):
     result = runner.invoke(app, ["import", "object", "ai2thor", "--all", "--out", str(tmp_path / "out"), "--cache", str(cache)], env=NO_BLENDER)
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
-    assert "arena-assets import: object ai2thor: cannot run the Blender worker" in result.output
-    assert "Traceback" not in result.output
+    assert "arena-assets import: object ai2thor: cannot run the Blender worker" in plain(result.output)
+    assert "Traceback" not in plain(result.output)
 
 
 def test_out_defaults_to_the_imported_root_and_cache_to_the_assets_dir(blender, tmp_path):

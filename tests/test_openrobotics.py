@@ -20,6 +20,7 @@ from arena_assets.importers.gso import FuelObjects
 from arena_assets.importers.openrobotics import OpenRobotics, asset_name, wanted
 from arena_assets.semantic import CURRENT_ASA
 from arena_assets.utils.Database import Database
+from cli_output import plain
 
 ITEM = "aws_robomaker_warehouse_Lamp_01"
 FIXTURE = Path(__file__).parent / "fixtures" / "openrobotics" / f"{ITEM}.zip"
@@ -484,7 +485,7 @@ def test_import_command_names_the_license_it_refuses(tmp_path):
     seed(tmp_path, metadata=METADATA | {"license_name": CC_BY_SA})
     result = CliRunner().invoke(app, ["-s", "import", "object", "openrobotics", ITEM, "--out", str(tmp_path / "out"), "--cache", str(tmp_path / "cache")])
     assert result.exit_code == 2
-    assert f"{ITEM} is under {CC_BY_SA}, only CC0 and CC BY 4.0 models are imported" in " ".join(result.output.replace("\u2502", " ").split())
+    assert f"{ITEM} is under {CC_BY_SA}, only CC0 and CC BY 4.0 models are imported" in plain(result.output)
     assert not (tmp_path / "out").exists()
 
 
