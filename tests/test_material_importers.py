@@ -1,7 +1,5 @@
-import http.server
 import io
 import json
-import threading
 import urllib.parse
 import zipfile
 from pathlib import Path
@@ -18,52 +16,13 @@ from arena_assets.importers.providers import AmbientCG as AmbientCGHost
 from arena_assets.importers.providers import PolyHaven as PolyHavenHost
 from arena_assets.semantic import CURRENT_ASA
 from arena_assets.utils.Database import Database
+from http_host import Host
 
 PLANKS = "worn_planks"
 PLANKS_INFO = {"name": "Worn Planks", "description": "Worn oak floor planks with scratches.", "categories": ["wood", "floor", "indoor"], "authors": {"Rob Tuytel": "All", "Dario Barresi": "Processing"}}
 METAL = "Metal032"
 METAL_RECORD = {"assetId": METAL, "dataType": "Material", "displayName": "Metal 032", "displayCategory": "Metal", "description": "", "tags": ["32", "grey", "metal", "smooth"], "shortLink": f"https://ambientcg.com/a/{METAL}"}
 LIVE_PLANKS = "aerial_asphalt_01"
-
-
-class Host(http.server.ThreadingHTTPServer):
-    def __init__(self):
-        super().__init__(("127.0.0.1", 0), Handler)
-        self.pages: dict[str, bytes] = {}
-        self.served: list[str] = []
-
-    @property
-    def base(self) -> str:
-        return f"http://127.0.0.1:{self.server_address[1]}"
-
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    server: Host
-
-    def do_GET(self):
-        self.server.served.append(self.path)
-        body = self.server.pages.get(self.path)
-        if body is None:
-            self.send_error(404)
-            return
-        self.send_response(200)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format: str, *args: object):
-        pass
-
-
-@pytest.fixture
-def host():
-    server = Host()
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    yield server
-    server.shutdown()
-    server.server_close()
-    thread.join()
 
 
 def files(root: Path) -> list[str]:

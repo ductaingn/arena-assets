@@ -1,5 +1,6 @@
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectAnnotation
 from arena_assets.utils.Database import Database
 from arena_assets.utils.geom import BoundingBox
 from arena_assets.utils.ModelConverter import BlenderUnavailable, command, environment
+from http_host import Host
 
 MATERIALS = [
     Annotation(
@@ -93,3 +95,14 @@ def cube(tmp_path):
     path.parent.mkdir()
     path.write_text(CUBE)
     return path
+
+
+@pytest.fixture
+def host():
+    server = Host()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield server
+    server.shutdown()
+    server.server_close()
+    thread.join()

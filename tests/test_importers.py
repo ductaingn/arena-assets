@@ -41,6 +41,8 @@ def test_registry_lists_importers_by_kind_then_source():
         ("object", "ai2thor"),
         ("object", "gso"),
         ("object", "openrobotics"),
+        ("object", "simready"),
+        ("object", "simready_dsx"),
         ("scenario", "eth_ucy"),
         ("scenario", "glow"),
         ("scenario", "juelich"),
@@ -80,7 +82,7 @@ def test_meta_lookup_and_membership():
 
 
 def test_meta_error_lists_the_sources_of_the_kind():
-    with pytest.raises(KeyError, match="no object importer 'nope', registered: ai2thor, gso, openrobotics"):
+    with pytest.raises(KeyError, match="no object importer 'nope', registered: ai2thor, gso, openrobotics, simready, simready_dsx"):
         IMPORTERS.meta("object", "nope")
 
 

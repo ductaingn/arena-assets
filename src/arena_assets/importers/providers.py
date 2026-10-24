@@ -128,8 +128,9 @@ class HFHub(Provider):
     name = "hfhub"
     _HOST = "https://huggingface.co"
 
-    def __init__(self, repo: str, repo_type: typing.Literal["dataset", "model"] = "dataset", revision: str = "main", token: str | None = None):
+    def __init__(self, repo: str, repo_type: typing.Literal["dataset", "model"] = "dataset", revision: str = "main", token: str | None = None, host: str = _HOST):
         self.repo = repo
+        self.host = host
         self.repo_type = repo_type
         self.revision = revision
         self.token = token if token is not None else hf_token()
@@ -142,26 +143,29 @@ class HFHub(Provider):
 
     @property
     def _prefix(self) -> str:
-        return f"{self._HOST}/datasets/{self.repo}" if self.repo_type == "dataset" else f"{self._HOST}/{self.repo}"
+        return f"{self.host}/datasets/{self.repo}" if self.repo_type == "dataset" else f"{self.host}/{self.repo}"
 
     def url(self, relpath: str) -> str:
         return f"{self._prefix}/resolve/{urllib.parse.quote(self.revision, safe='')}/{urllib.parse.quote(relpath.lstrip('/'))}"
 
-    def _tree_url(self, prefix: str) -> str:
+    def _tree_url(self, prefix: str, recursive: bool = True) -> str:
         path = f"/{urllib.parse.quote(prefix.strip('/'))}" if prefix.strip("/") else ""
-        return f"{self._HOST}/api/{self.repo_type}s/{self.repo}/tree/{urllib.parse.quote(self.revision, safe='')}{path}?recursive=true"
+        return f"{self.host}/api/{self.repo_type}s/{self.repo}/tree/{urllib.parse.quote(self.revision, safe='')}{path}?recursive={str(recursive).lower()}"
 
-    def list(self, prefix: str = "") -> Iterator[str]:
-        url: str | None = self._tree_url(prefix)
+    def _entries(self, prefix: str, recursive: bool) -> Iterator[dict]:
+        url: str | None = self._tree_url(prefix, recursive)
         while url:
             body, headers = self.read(url)
-            entries = json.loads(body)
-            link = headers.get("Link", "")
-            for entry in entries:
-                if entry["type"] == "file":
-                    yield entry["path"]
-            match = _LINK_NEXT.search(link)
+            yield from json.loads(body)
+            match = _LINK_NEXT.search(headers.get("Link", ""))
             url = match.group(1) if match else None
+
+    def list(self, prefix: str = "") -> Iterator[str]:
+        return (entry["path"] for entry in self._entries(prefix, recursive=True) if entry["type"] == "file")
+
+    def directories(self, prefix: str = "") -> Iterator[str]:
+        """Paths of the directories directly under prefix."""
+        return (entry["path"] for entry in self._entries(prefix, recursive=False) if entry["type"] == "directory")
 
 
 class Fuel(Provider):

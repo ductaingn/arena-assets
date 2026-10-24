@@ -157,7 +157,7 @@ class FuelObjects(Importer):
             _place_dae(mesh, visual, source / visual.albedo if visual.albedo else None)
         metadata = _metadata(src.with_suffix(".json"))
         labels = dict.fromkeys(slug for key in cls.LABELS for slug in _slugs(metadata.get(key)))
-        _annotate(source / ANNOTATION_NAME, item, description, [cls.ORIGIN, *labels], next(iter(_slugs(metadata.get("categories"))), None))
+        annotate(source / ANNOTATION_NAME, item, description, [cls.ORIGIN, *labels], next(iter(_slugs(metadata.get("categories"))), None))
         return source
 
 
@@ -280,7 +280,8 @@ def _slugs(values: list | None) -> list[str]:
     return [slug for slug in (re.sub(r"[^a-z0-9]+", "_", str(value).lower()).strip("_") for value in values or []) if slug]
 
 
-def _annotate(path: Path, item: str, description: str, tags: list[str], kind: str | None) -> None:
+def annotate(path: Path, item: str, description: str, tags: list[str], kind: str | None) -> None:
+    """Write an object annotation with the semantic fixes applied, the kind tag set when the fixes leave none."""
     spec = load_spec()
     _dump(path, {"name": item, "desc": description, "tags": tags})
     fixes.fix_file(path, spec)
