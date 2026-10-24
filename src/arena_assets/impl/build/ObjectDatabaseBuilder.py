@@ -5,6 +5,7 @@ import json
 import math
 import os
 import shutil
+import tempfile
 import typing
 from collections.abc import Iterable
 from pathlib import Path
@@ -22,6 +23,7 @@ from arena_assets.utils.affordance import SEAT_FALLBACK, SEAT_SIZE, largest_seat
 from arena_assets.utils.geom import BoundingBox
 from arena_assets.utils.logging import get_logger
 from arena_assets.utils.mesh_io import read_mesh
+from arena_assets.utils.texture import MAX_TEXTURE_PX
 from arena_assets.utils.ModelConverter import BlenderWorker
 from arena_assets.utils.ModelConverter.lights import DEFAULT_CCT_K, Quaternion, SourceLight, SourceMaterial, Vector3, color_temperature, nearest_material
 from arena_assets.utils.ModelConverter.UsdBaker import UsdBaker
@@ -377,6 +379,7 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
             self._pipeline.insert(0, carry_affordances)
 
         self._previews_enabled = False
+        self._max_texture = MAX_TEXTURE_PX
         self._recompute_affordances = False
 
     @classmethod
@@ -434,8 +437,17 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
             if self._previews_enabled:
                 steps.append(("render_perspective", str(dest / f"{annotation.name}_thumb.png"), {"resolution": (512, 512), "theta": math.radians(annotation.face.angle + 30)}))
                 steps.append(("render_topdown", str(dest / f"{annotation.name}_topdown.png"), {"resolution": (512, 512)}))
+            textures = Path(tempfile.mkdtemp(prefix=".textures-", dir=dest))
+            if self._max_texture > 0:
+                steps.append(("limit_textures", self._max_texture, str(textures)))
             steps.extend(("save", str(dest / f"{annotation.name}.{ext}")) for ext in sorted(self._formats))
-            result = self._blender.run(steps)
+            try:
+                result = self._blender.run(steps)
+            finally:
+                shutil.rmtree(textures, ignore_errors=True)
+            if self._max_texture > 0:
+                for limit in result.values[[step[0] for step in steps].index("limit_textures")]:
+                    logger.info("Texture %s of %s: %dx%d to %dx%d", limit["name"], annotation.path, limit["width"], limit["height"], limit["new_width"], limit["new_height"])
 
             logger.info("Processed model %s", annotation.path)
             for line in (scan.stdout + result.stdout).splitlines():
@@ -543,6 +555,11 @@ class ObjectDatabaseBuilder(DatabaseBuilder[ObjectAnnotation]):
     @enable.register("recompute-affordances")
     def recompute_affordances(self):
         self._recompute_affordances = True
+
+    @enable.register("max-texture")
+    def max_texture(self, pixels: str = str(MAX_TEXTURE_PX)):
+        self._max_texture = int(pixels)
+        logger.info("Fitting textures into %d px, 0 keeps them as they are.", self._max_texture)
 
     @enable.register("previews")
     def previews(self):

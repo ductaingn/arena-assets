@@ -14,12 +14,14 @@ from pathlib import Path
 import bpy
 import mathutils
 import numpy as np
+from PIL import UnidentifiedImageError
 
 from . import ModelFormat, sdf_model
 from .CoordinateSystem import CoordinateSystem
 from .geom import BoundingBox
 from .io_utils import capture_all_output
 from .lights import SourceLight, SourceMaterial
+from .textures import TextureLimit, limited
 
 logger = logging.getLogger("ModelConverter")
 
@@ -257,6 +259,41 @@ class ModelConverter:
                 (min_corner.z, max_corner.z),
             )
         )
+
+    def limit_textures(self, max_px: int, directory: str) -> list[TextureLimit]:
+        """Fit every image texture into max_px on its longer side and store 16-bit ones with 8 bits per channel, as files in directory, repacked when they came packed."""
+        out = Path(directory)
+        out.mkdir(parents=True, exist_ok=True)
+        changed: list[TextureLimit] = []
+        for index, image in enumerate(bpy.data.images):
+            if image.source != "FILE":
+                continue
+            size = tuple(image.size)
+            if max(size) == 0 or (max(size) <= max_px and not image.is_float):
+                continue
+            if image.packed_file is not None:
+                data = bytes(image.packed_file.data)
+            else:
+                source = Path(bpy.path.abspath(image.filepath, library=image.library))
+                if not source.is_file():
+                    continue
+                data = source.read_bytes()
+            try:
+                encoded, image_format, (width, height), (new_width, new_height) = limited(data, max_px)
+            except UnidentifiedImageError:
+                continue
+            packed = image.packed_file is not None
+            target = out / f"{index}_{Path(image.filepath or image.name).stem}.{'png' if image_format == 'PNG' else 'jpg'}"
+            target.write_bytes(encoded)
+            image.filepath = str(target)
+            if packed:
+                image.unpack(method="REMOVE")
+            image.file_format = image_format
+            image.reload()
+            if packed:
+                image.pack()
+            changed.append(TextureLimit(image.name, width, height, new_width, new_height))
+        return changed
 
     def triangles(self) -> tuple[np.ndarray, np.ndarray]:
         """World-space vertices and triangle indices of every mesh in the scene."""

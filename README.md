@@ -51,6 +51,7 @@ Build options are passed with `-o key=value`:
 | --- | --- | --- |
 | `formats` | object | comma-separated model formats to export (`*` for all) |
 | `previews` | object | render preview images |
+| `max-texture` | object, material | fit every texture into this many pixels on its longer side and store 16-bit maps with 8 bits per channel (default `2048`, `0` keeps them as they are) |
 | `procthor` | object, material | export a ProcTHOR-compatible `asset-database.json` |
 | `bake-mdl` | object | bake embedded MDL materials with Isaac Sim |
 | `recompute-affordances` | object | recompute the z range of every affordance slot, hand-set ones included |

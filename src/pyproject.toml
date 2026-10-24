@@ -19,6 +19,7 @@ dependencies = [
     "enlighten>=1.14",
     "usd-core>=26.3",
     "numpy>=1.26",
+    "pillow",
 ]
 
 [project.optional-dependencies]
