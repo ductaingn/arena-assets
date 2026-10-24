@@ -636,7 +636,7 @@ class ModelConverter:
 ModelConverter.register(ModelFormat.USD, ModelFormat.USDA, ModelFormat.USDC, ModelFormat.USDZ)(
     _ModelConverterExt.inline(
         CoordinateSystem.default(),
-        bpy.ops.wm.usd_import,
+        functools.partial(bpy.ops.wm.usd_import, support_scene_instancing=False),
         functools.partial(
             bpy.ops.wm.usd_export,
             export_materials=True,
