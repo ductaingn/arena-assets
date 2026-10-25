@@ -5,7 +5,7 @@ from arena_assets.impl.build.HumanDatabaseBuilder import (
     HumanDatabaseBuilder,
 )
 from arena_assets.utils.geom import BoundingBox
-from arena_assets.utils.human import PelvisClearance
+from arena_assets.utils.human import Legs, PelvisClearance
 
 
 def test_builder_factory_resolves_human():
@@ -56,6 +56,7 @@ def test_human_annotation_fields():
         "face",
         "note",
         "pelvis_clearance",
+        "legs",
     }
 
 
@@ -63,11 +64,13 @@ def test_human_builder_registers_previews():
     assert "previews" in DatabaseBuilder.get_all_options()[AssetType.HUMAN]
 
 
-def test_pelvis_clearance_roundtrips_and_is_left_out_until_measured():
+def test_body_measurements_roundtrip_and_are_left_out_until_measured():
     annotation = HumanAnnotation(name="Nurse01", path="Human/Nurse01", face=Face.POS_X)
-    assert "pelvis_clearance" not in converter.unstructure(annotation)
-    assert "pelvis_clearance" not in annotation.as_metadata
+    assert not {"pelvis_clearance", "legs"} & set(converter.unstructure(annotation))
+    assert not {"pelvis_clearance", "legs"} & set(annotation.as_metadata)
     annotation.pelvis_clearance = PelvisClearance(sit=0.12, lie=0.11)
+    annotation.legs = Legs(hip=0.015, thigh=0.36, shin=0.37, ankle=0.08)
     assert converter.unstructure(annotation)["pelvis_clearance"] == {"sit": 0.12, "lie": 0.11}
+    assert converter.unstructure(annotation)["legs"] == {"hip": 0.015, "thigh": 0.36, "shin": 0.37, "ankle": 0.08}
     assert converter.structure({**converter.unstructure(annotation), "name": "Nurse01", "path": "Human/Nurse01"}, HumanAnnotation) == annotation
     assert HumanAnnotation.from_metadata(annotation.as_metadata) == annotation

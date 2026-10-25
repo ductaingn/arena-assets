@@ -1,11 +1,4 @@
-"""Body measurements read off a skinned human model (COLLADA) in its bind pose.
-
-A body resting on furniture carries its pelvis joint above the surface by the flesh under it. Seated, the thighs
-swing forward and the back of the thighs ends up underneath; lying on the back, the whole body tips over and the same
-back surface ends up underneath. Both clearances are therefore read off the vertices that follow the thighs, measured
-behind the hip joints in the standing bind pose. Garments that hang from the pelvis (lab coats, skirts) follow the
-pelvis rather than the thighs and stay out of the measurement, as they would fold away under a seated body.
-"""
+"""Body measurements read off a skinned human model (COLLADA) in its bind pose, clearances from the thigh vertices behind the hip joints."""
 
 from __future__ import annotations
 
@@ -17,6 +10,7 @@ import numpy as np
 
 PELVIS_JOINT = "Hips"  # cmu_mb rig, the skeleton's root joint
 THIGH_JOINTS = ("LeftUpLeg", "RightUpLeg")  # cmu_mb rig, the hip joints the thighs hang from
+LEG_CHAINS = (("LeftUpLeg", "LeftLeg", "LeftFoot"), ("RightUpLeg", "RightLeg", "RightFoot"))  # cmu_mb rig, hip, knee, ankle
 
 
 @attrs.define(frozen=True)
@@ -25,6 +19,16 @@ class PelvisClearance:
 
     sit: float = attrs.field(converter=float)
     lie: float = attrs.field(converter=float)
+
+
+@attrs.define(frozen=True)
+class Legs:
+    """Leg geometry of a standing body in m: pelvis joint above the hip joints, thigh, shin, ankle joint above the soles."""
+
+    hip: float = attrs.field(converter=float)
+    thigh: float = attrs.field(converter=float)
+    shin: float = attrs.field(converter=float)
+    ankle: float = attrs.field(converter=float)
 
 
 @attrs.define(frozen=True)
@@ -46,10 +50,22 @@ def pelvis_clearance(skin: Skin, forward: np.ndarray) -> PelvisClearance:
         thigh = skin.points[dominant == name]
         if len(thigh) == 0:
             raise ValueError(f"no vertex follows {name}")
-        behind = float(((hip[:2] - thigh[:, :2]) @ forward).max())  # deepest point of the thigh behind the hip joint
-        sit.append(pelvis[2] - hip[2] + behind)  # the thigh swung forward: that point ends up under the hip joint
-        lie.append(float((pelvis[:2] - hip[:2]) @ forward) + behind)  # the body tipped back: under the pelvis
+        behind = float(((hip[:2] - thigh[:, :2]) @ forward).max())
+        sit.append(pelvis[2] - hip[2] + behind)
+        lie.append(float((pelvis[:2] - hip[:2]) @ forward) + behind)
     return PelvisClearance(sit=round(max(sit), 3), lie=round(max(lie), 3))
+
+
+def legs(skin: Skin) -> Legs:
+    """Leg geometry of a body in its bind pose, both legs averaged, the soles at its lowest vertex."""
+    floor = float(skin.points[:, 2].min())
+    hip, knee, ankle = (np.mean([skin.joints[chain[i]] for chain in LEG_CHAINS], axis=0) for i in range(3))
+    return Legs(
+        hip=round(float(skin.joints[PELVIS_JOINT][2] - hip[2]), 3),
+        thigh=round(float(np.linalg.norm(hip - knee)), 3),
+        shin=round(float(np.linalg.norm(knee - ankle)), 3),
+        ankle=round(float(ankle[2]) - floor, 3),
+    )
 
 
 def read_skin(dae: Path) -> Skin:
@@ -78,7 +94,7 @@ def read_skin(dae: Path) -> Skin:
         names = (source(inputs.get("JOINT")).findtext(f"{ns}Name_array") or "").split()
         inverse_binds = floats(inputs.get("INV_BIND_MATRIX")).reshape(-1, 4, 4)
         for name, inverse_bind in zip(names, inverse_binds, strict=True):
-            joints.setdefault(name, np.linalg.inv(inverse_bind)[:3, 3])  # a joint sits at the inverse of its inverse bind matrix
+            joints.setdefault(name, np.linalg.inv(inverse_bind)[:3, 3])
 
         weights_element = skin.find(f"{ns}vertex_weights")
         if weights_element is None:

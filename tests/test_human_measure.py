@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 
 from arena_assets.impl import Face
-from arena_assets.impl.build.HumanDatabaseBuilder import HumanAnnotation, measure_pelvis_clearance
-from arena_assets.utils.human import Skin, pelvis_clearance, read_skin
+from arena_assets.impl.build.HumanDatabaseBuilder import HumanAnnotation, measure_body
+from arena_assets.utils.human import Legs, Skin, legs, pelvis_clearance, read_skin
 
 
 def body(coat: bool = False) -> Skin:
@@ -11,7 +11,7 @@ def body(coat: bool = False) -> Skin:
     joints = {"Hips": np.array([0.0, 0.0, 0.9]), "LeftUpLeg": np.array([-0.01, 0.1, 0.88]), "RightUpLeg": np.array([-0.01, -0.1, 0.88])}
     points = [(-0.11, 0.1, 0.8), (0.05, 0.1, 0.6), (-0.11, -0.1, 0.8), (0.0, 0.0, 1.0)]
     dominant = ["LeftUpLeg", "LeftUpLeg", "RightUpLeg", "Hips"]
-    if coat:  # a hem hanging from the pelvis, far behind and below the body
+    if coat:
         points.append((-0.4, 0.0, 0.2))
         dominant.append("Hips")
     return Skin(joints=joints, points=np.array(points), dominant=dominant)
@@ -33,7 +33,7 @@ def test_garments_hanging_from_the_pelvis_do_not_count():
 
 def test_clearance_follows_the_facing():
     turned = body()
-    rotate = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])  # a quarter turn: facing +x becomes +y
+    rotate = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
     turned = Skin(joints={k: rotate @ v for k, v in turned.joints.items()}, points=turned.points @ rotate.T, dominant=turned.dominant)
     assert pelvis_clearance(turned, np.array([0.0, 1.0])) == pelvis_clearance(body(), np.array([1.0, 0.0]))
 
@@ -75,7 +75,15 @@ def test_read_skin_takes_joints_from_inverse_binds_and_points_from_the_bind_shap
     assert skin.dominant == ["Hips", "Hips", "LeftUpLeg"]
 
 
+def test_legs_run_from_the_pelvis_through_both_leg_chains_to_the_soles():
+    joints = {"Hips": np.array([0.0, 0.0, 0.92])}
+    for side, y in (("Left", 0.1), ("Right", -0.1)):
+        joints |= {f"{side}UpLeg": np.array([0.0, y, 0.9]), f"{side}Leg": np.array([0.03, y, 0.5]), f"{side}Foot": np.array([0.0, y, 0.08])}
+    skin = Skin(joints=joints, points=np.array([(0.1, 0.1, -0.01), (0.0, 0.0, 1.6)]), dominant=["LeftFoot", "Head"])
+    assert legs(skin) == Legs(hip=0.02, thigh=round(float(np.hypot(0.03, 0.4)), 3), shin=round(float(np.hypot(0.03, 0.42)), 3), ankle=0.09)
+
+
 def test_build_leaves_an_unmeasurable_body_unannotated(tmp_path):
-    annotation = HumanAnnotation(name="Nurse01", path="Human/Nurse01", face=Face.POS_X)
-    assert measure_pelvis_clearance(annotation, tmp_path / "missing.dae") is None
-    assert measure_pelvis_clearance(HumanAnnotation(name="Odd", path="Human/Odd", face=Face.XY), tmp_path / "missing.dae") is None
+    for annotation in (HumanAnnotation(name="Nurse01", path="Human/Nurse01", face=Face.POS_X), HumanAnnotation(name="Odd", path="Human/Odd", face=Face.XY)):
+        measure_body(annotation, tmp_path / "missing.dae")
+        assert annotation.pelvis_clearance is None and annotation.legs is None
