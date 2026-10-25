@@ -21,6 +21,7 @@ dependencies = [
     "numpy>=1.26",
     "pillow",
 ]
+dynamic = ["scripts"]
 
 [project.optional-dependencies]
 db = [
@@ -32,9 +33,6 @@ vlm = [
 test = [
     "pytest>=8",
 ]
-
-[project.scripts]
-arena-assets = "arena_assets.__main__:app"
 
 [project.urls]
 Homepage = "https://github.com/voshch/arena-assets"
