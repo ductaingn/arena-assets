@@ -149,6 +149,35 @@ def test_asset_class_inferred_from_path_field(tmp_path):
     assert any(f.code == "facet-not-applicable" for f in findings)
 
 
+def test_sound_class_is_inferred_and_shares_kind_and_origin(tmp_path):
+    path = _write(
+        tmp_path / "Common" / "Sound" / "door_knock" / "annotation.yaml",
+        {"name": "door_knock", "path": "Sound/door_knock", "asa": 1, "tags": ["domain::common", "kind::onset", "origin::fsd50k"]},
+    )
+    findings = lint_file(path, SPEC)
+    assert [(f.severity, f.code) for f in findings] == [("info", "novel-value")]
+    assert "'fsd50k'" in findings[0].message
+
+
+def test_object_facet_on_a_sound_is_a_warning(tmp_path):
+    path = _write(
+        tmp_path / "Common" / "Sound" / "door_knock" / "annotation.yaml",
+        {"name": "door_knock", "path": "Sound/door_knock", "asa": 1, "tags": ["domain::common", "kind::onset", "mount::wall"]},
+    )
+    matches = [f for f in lint_file(path, SPEC) if f.code == "facet-not-applicable"]
+    assert len(matches) == 1
+    assert matches[0].severity == "warning"
+    assert "sound" in matches[0].message
+
+
+def test_novel_sound_kind_is_info(tmp_path):
+    path = _write(
+        tmp_path / "Common" / "Sound" / "rain" / "annotation.yaml",
+        {"name": "rain", "path": "Sound/rain", "asa": 1, "tags": ["domain::common", "kind::weather"]},
+    )
+    assert [(f.severity, f.code) for f in lint_file(path, SPEC)] == [("info", "novel-value")]
+
+
 def test_lint_tree_walks_all_annotation_files(tmp_path):
     _write(
         tmp_path / "Office" / "Object" / "A" / "annotation.yaml",

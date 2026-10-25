@@ -7,12 +7,20 @@ Build, query, and manage 3D model databases for [Arena](https://github.com/Arena
 ## Installation
 
 ```sh
-pip install ./src
+pip install "./src[db]"
 ```
 
-Note: if you want to install `arena_assets[build]`, you must use Python 3.11.* (bpy dependency).
+Python 3.12. The `db` extra (ChromaDB) is needed for `db build`, `db query` and `db list`, everything else runs without it.
 
-The repository is also an `ament_cmake` ROS package; building it in a colcon workspace installs the CLI into a dedicated venv.
+Model conversion (building objects, human previews, importing object datasets) runs in Blender, which only ships for Python 3.11. It lives in its own package, [`blender/`](blender), and runs as a worker process:
+
+```sh
+uv tool install --python 3.11 ./blender
+```
+
+That puts `arena-assets-blender` on PATH. To use an existing environment instead, set `ARENA_ASSETS_BLENDER` to the worker command, for example `ARENA_ASSETS_BLENDER="/path/to/venv/bin/python -m arena_assets_blender"`.
+
+The repository is also an `ament_python` ROS package: in the Arena workspace it is a member of the shared uv workspace and `colcon build` installs the `arena_assets` console script for `ros2 run arena_assets arena_assets`. The Blender worker is not part of that build.
 
 ## Usage
 
@@ -43,6 +51,7 @@ Build options are passed with `-o key=value`:
 | --- | --- | --- |
 | `formats` | object | comma-separated model formats to export (`*` for all) |
 | `previews` | object | render preview images |
+| `max-texture` | object, material | fit every texture into this many pixels on its longer side and store 16-bit maps with 8 bits per channel (default `2048`, `0` keeps them as they are) |
 | `procthor` | object, material | export a ProcTHOR-compatible `asset-database.json` |
 | `bake-mdl` | object | bake embedded MDL materials with Isaac Sim |
 | `recompute-affordances` | object | recompute the z range of every affordance slot, hand-set ones included |
@@ -84,7 +93,7 @@ arena-assets semantic seats apply seats.yaml ./dataset [--overwrite]
 
 ### Sound assets
 
-A sound asset is a directory `Sound/<Name>/` holding its wav files and a `<Name>.yaml` manifest (version 2: `kind`, `level_db`, `loop`, `variants`, optional `desc` and `tags`). The manifest is the only annotation source: the build derives `annotation.yaml` from it (tags are the manifest tags, every variant's tags, and the kind) and fails on a manifest with the wrong version or without `kind`, `level_db` or `variants`.
+A sound asset is a directory `Sound/<Name>/` holding its wav files and a `<Name>.yaml` manifest (version 2: `kind`, `level_db`, `loop`, `variants`, optional `desc` and `tags`). The manifest is the only annotation source: the build derives `annotation.yaml` from it (tags are the manifest tags, every variant's tags, and `kind::<kind>`, stamped with the ASA revision) and fails on a manifest with the wrong version or without `kind`, `level_db` or `variants`.
 
 ```sh
 arena-assets db ./sounds build -t sound -i ./dataset
@@ -93,6 +102,17 @@ arena-assets db ./sounds query sound "steps on wood" --filter "kind=footstep" -n
 ```
 
 `kind`, `loop`, `level_db`, and the comma-joined variant ids are stored as metadata.
+
+### Import upstream datasets
+
+```sh
+arena-assets import                         # registered sources by kind, with license verdict and host
+arena-assets import object                  # sources of one kind
+arena-assets import object gso              # item ids of one source
+arena-assets import object gso Cole_Hardware_Hammer_Black -o ./gso
+```
+
+Each import converts items of an upstream dataset (objects, materials, worlds, scenarios, benchmark suites, sounds, recorded episodes) into local items under the imported root, marked with an `ATTRIBUTION.yaml`. [IMPORTING.md](IMPORTING.md) documents the pipeline and every source.
 
 ### Upload a built database
 
@@ -222,7 +242,7 @@ Specifying `-o bake-mdl` without a path uses a docker image from the [Nvidia nvc
 ## Development
 
 ```sh
-pip install "./src[test]"
+pip install "./src[db,test]"
 pre-commit install
 
 pytest tests/

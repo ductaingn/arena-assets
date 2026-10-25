@@ -13,6 +13,7 @@ from cattrs.gen import make_dict_unstructure_fn, override
 from arena_assets.impl import ANNOTATION_NAME, AssetType, Face, SpatialAnnotation, converter
 from arena_assets.utils.human import PelvisClearance, pelvis_clearance, read_skin
 from arena_assets.utils.logging import get_logger
+from arena_assets.utils.ModelConverter import BlenderWorker
 
 from . import DatabaseBuilder, OptionRegistry, OverwriteMode
 
@@ -76,6 +77,7 @@ class HumanDatabaseBuilder(DatabaseBuilder[HumanAnnotation]):
             self._pipeline.insert(0, measure_built)
 
         self._previews_enabled = False
+        self._blender = BlenderWorker()
 
     def process_entity(self, annotation, dest):
         try:
@@ -97,19 +99,14 @@ class HumanDatabaseBuilder(DatabaseBuilder[HumanAnnotation]):
             return None
 
     def _render_preview(self, annotation: HumanAnnotation, dest: Path) -> None:
-        from arena_assets.utils.ModelConverter.converter import ModelConverter
-
-        with ModelConverter() as model_converter:
-            model_converter.load(str(dest / "meshes" / f"{annotation.name}.dae"))
-            model_converter.bind_uv_maps()
-            model_converter.render_perspective(
-                str(dest / f"{annotation.name}_thumb.png"),
-                resolution=(512, 512),
-                theta=math.radians(annotation.face.angle + 30),
-                elevation=math.pi / 2,
-                ambient=0.5,
-            )
-        for line in model_converter.stderr.splitlines():
+        result = self._blender.run(
+            [
+                ("load", str(dest / "meshes" / f"{annotation.name}.dae")),
+                ("bind_uv_maps",),
+                ("render_perspective", str(dest / f"{annotation.name}_thumb.png"), {"resolution": (512, 512), "theta": math.radians(annotation.face.angle + 30), "elevation": math.pi / 2, "ambient": 0.5}),
+            ]
+        )
+        for line in result.stderr.splitlines():
             logger.warning("ModelConverter: %s", line)
 
     enable = OptionRegistry()
@@ -118,3 +115,6 @@ class HumanDatabaseBuilder(DatabaseBuilder[HumanAnnotation]):
     def previews(self):
         logger.info("Enabling preview generation option.")
         self._previews_enabled = True
+        if self._overwrite != OverwriteMode.ANNOTATIONS_ONLY:
+            self._pre.append(self._blender.start)
+        self._post.append(self._blender.close)

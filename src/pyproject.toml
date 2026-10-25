@@ -5,41 +5,41 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "arena_assets"
 version = "0.1.0"
-description = "TODO"
+description = "Build, query, and manage 3D asset databases"
 authors = [
     { name = "kuro", email = "giang.nht108201@gmail.com" },
     { name = "Vova Shcherbyna", email = "dev@voshch.dev" },
 ]
+requires-python = "==3.12.*"
 dependencies = [
-    "chromadb~=1.0.21",
-    "numpy~=1.26.4",
-    "scipy~=1.15.3",
-    "pyyaml~=6.0.2",
-    "mathutils~=3.3.0",
-    "attrs~=25.3.0",
-    "cattrs~=25.2.0",
-    "typer~=0.19.1",
-    "enlighten~=1.14.1",
+    "pyyaml>=6.0",
+    "attrs>=25.3",
+    "cattrs>=25.2",
+    "typer>=0.19",
+    "enlighten>=1.14",
     "usd-core>=26.3",
+    "numpy>=1.26",
+    "pillow",
 ]
-# requires-python = "==3.11.*" # only required for arena_assets[build]
-
+dynamic = ["scripts"]
 
 [project.optional-dependencies]
-build = [
-    "bpy~=4.5.3",
-]
-test = [
-    "pytest~=8.0",
+db = [
+    "chromadb>=1.0.21",
 ]
 vlm = [
     "google-genai~=2.32",
+]
+test = [
+    "pytest>=8",
 ]
 
 [project.urls]
 Homepage = "https://github.com/voshch/arena-assets"
 Repository = "https://github.com/voshch/arena-assets"
 
+[tool.uv]
+package = false
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -49,7 +49,7 @@ include = ["arena_assets*"]
 arena_assets = ["semantic/asa.yaml", "semantic/seats_example.yaml"]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 320
 src = ["arena_assets"]
 extend-exclude = [
@@ -75,4 +75,3 @@ quote-style = "preserve"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "lf"
-

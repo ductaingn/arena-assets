@@ -12,7 +12,7 @@ _SEGMENT = re.compile(r"^[a-z0-9_]+$")
 
 _DEFAULT_SPEC_PATH = Path(__file__).parent / "asa.yaml"
 
-_CLASS_DIR_NAMES = {"Object": "object", "Material": "material", "Human": "human"}
+_CLASS_DIR_NAMES = {"Object": "object", "Material": "material", "Human": "human", "Sound": "sound"}
 
 
 @attrs.define
@@ -62,7 +62,7 @@ def load_spec(path: Path | str | None = None) -> Spec:
 
 
 def class_from_dirname(name: str) -> str | None:
-    """Map an on-disk class directory name (Object/Material/Human) to its asset class."""
+    """Map an on-disk class directory name (Object/Material/Human/Sound) to its asset class."""
     return _CLASS_DIR_NAMES.get(name)
 
 

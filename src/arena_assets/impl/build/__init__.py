@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import abc
+import contextlib
 import os
+import tempfile
 from enum import Enum
 from pathlib import Path
 import shutil
@@ -68,6 +70,27 @@ class OptionRegistry:
 
 
 AnnotationT = typing.TypeVar("AnnotationT", bound=Annotation)
+
+
+@contextlib.contextmanager
+def replacing(*targets: Path) -> Iterator[None]:
+    """Move the items at targets aside while a block rebuilds them, restoring each one it leaves without an annotation."""
+    kept: dict[Path, Path] = {}
+    built = False
+    try:
+        for target in targets:
+            if target.exists():
+                aside = Path(tempfile.mkdtemp(prefix=f".{target.name}.", dir=target.parent))
+                target.rename(aside / target.name)
+                kept[target] = aside
+        yield
+        built = True
+    finally:
+        for target, aside in kept.items():
+            if not (built and (target / ANNOTATION_NAME).is_file()):
+                shutil.rmtree(target, ignore_errors=True)
+                (aside / target.name).rename(target)
+            shutil.rmtree(aside)
 
 
 class DatabaseBuilder(abc.ABC, typing.Generic[AnnotationT]):

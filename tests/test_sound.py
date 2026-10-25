@@ -14,6 +14,10 @@ from arena_assets.impl.build.SoundDatabaseBuilder import (
 )
 from arena_assets.impl.listall import list_database
 from arena_assets.impl.query import query_database
+from arena_assets.semantic import CURRENT_ASA
+from arena_assets.semantic.fixes import fix_file
+from arena_assets.semantic.lint import lint_file
+from arena_assets.semantic.taxonomy import load_spec
 
 SOUNDS = {
     "alarm_loop": {
@@ -112,7 +116,8 @@ def test_sound_build_writes_annotation_derived_from_manifest(sound_db):
     assert annotation["name"] == "alarm_loop"
     assert annotation["path"] == "Sound/alarm_loop"
     assert annotation["desc"] == "loud fire alarm siren"
-    assert annotation["tags"] == ["siren", "emergency", "alarm"]
+    assert annotation["tags"] == ["siren", "emergency", "alarm", "kind::alarm"]
+    assert annotation["asa"] == CURRENT_ASA
     assert annotation["kind"] == "alarm"
     assert annotation["loop"] is True
     assert annotation["level_db"] == 88.0
@@ -121,11 +126,33 @@ def test_sound_build_writes_annotation_derived_from_manifest(sound_db):
 
 def test_sound_annotation_tags_union_variant_tags_and_kind(sound_db):
     by_name = {annotation.name: annotation for annotation in list_database(str(sound_db), AssetType.SOUND)}
-    assert by_name["footstep"].tags == ["walk", "oak_planks", "default", "footstep"]
-    assert by_name["footstep"].variants == [
-        "footstep_oak_planks_01",
-        "footstep_default_01",
-    ]
+    assert by_name["footstep"].tags == ["walk", "oak_planks", "default", "kind::footstep"]
+    assert by_name["footstep"].facets == {"kind": ["footstep"]}
+    assert by_name["footstep"].asa == CURRENT_ASA
+    assert by_name["footstep"].variants == ["footstep_oak_planks_01", "footstep_default_01"]
+
+
+def test_sound_build_output_conforms_to_the_semantic_standard(sound_db):
+    spec = load_spec()
+    for name in SOUNDS:
+        findings = lint_file(sound_db / "Sound" / name / ANNOTATION_NAME, spec)
+        assert {finding.severity for finding in findings} == {"info"}
+        assert {finding.code for finding in findings} == {"bare-tag", "missing-recommended-facet"}
+        assert [finding.message for finding in findings if finding.code == "missing-recommended-facet"] == ["missing recommended facet 'domain' for sound"]
+
+
+def test_sound_fix_keeps_the_built_kind_and_fills_the_domain(tmp_path):
+    directory = _write_sound(tmp_path / "input" / "Common", "alarm_loop", SOUNDS["alarm_loop"])
+    DatabaseBuilder.Builder(AssetType.SOUND)(input_path=tmp_path / "input" / "Common", output_path=tmp_path / "output" / "Common").build()
+    path = tmp_path / "output" / "Common" / "Sound" / directory.name / ANNOTATION_NAME
+    spec = load_spec()
+    assert fix_file(path, spec) is True
+    with open(path) as f:
+        fixed = yaml.safe_load(f)
+    assert fixed["tags"] == ["domain::common", "kind::alarm", "siren", "emergency"]
+    assert fixed["kind"] == "alarm"
+    assert fix_file(path, spec) is False
+    assert {finding.code for finding in lint_file(path, spec)} == {"bare-tag"}
 
 
 def test_sound_query_by_text_ranks_matching_sound_first(sound_db):

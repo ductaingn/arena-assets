@@ -1,9 +1,9 @@
 # ASA: Arena Semantic Annotations
 
 ASA is the semantic labeling standard for `annotation.yaml` files (objects,
-materials, humans). It gives every tag a stable shape so it can be used for
-embedding text, filterable metadata, and lint, without every consumer inventing
-its own parsing.
+materials, humans, sounds). It gives every tag a stable shape so it can be used
+for embedding text, filterable metadata, and lint, without every consumer
+inventing its own parsing.
 
 ASA covers *semantics only*: what an asset is, what it affords, where it belongs.
 First-order geometric properties (`bounding_box`, `face`, and the extents derived
@@ -26,8 +26,8 @@ violates them.
 
 | facet | applies to | cardinality | recommended | open | embedded |
 | --- | --- | --- | --- | --- | --- |
-| `domain` | object, material, human | multi | yes | yes | yes |
-| `kind` | object, material | single | yes | yes | yes |
+| `domain` | object, material, human, sound | multi | yes | yes | yes |
+| `kind` | object, material, sound | single | yes | yes | yes |
 | `mount` | object | multi | | | |
 | `room` | object | multi | | yes | yes |
 | `hoi` | object | multi | | yes | yes |
@@ -37,10 +37,19 @@ violates them.
 | `human::ethnicity` | human | single | yes | yes | yes |
 | `human::age` | human | single | yes | | yes |
 | `human::role` | human | single | yes | yes | yes |
-| `origin` | object, material, human | single | | yes | |
+| `origin` | object, material, human, sound | single | | yes | |
 
 `hoi` is order-sensitive: the first `hoi::` tag is the primary interaction
 property in the ProcTHOR export, the rest are secondary.
+
+A sound's `kind` is the `kind` of its `<name>.yaml` manifest, one row of the
+sound kinds table (`arena_simulation_setup/configs/sounds/kinds.yaml`: `alarm`,
+`footstep`, `motor`, `music`, `onset`, `speech`, open because a manifest may
+declare further kinds). The sound build
+derives `annotation.yaml` from the manifest and writes the `kind::` tag and the
+`asa` stamp itself, so a sound's tags are edited in its manifest. Dataset
+importers map upstream labels onto this vocabulary and mark their items with
+`origin::<source>`.
 
 The full seed vocabularies live in [`asa.yaml`](asa.yaml), which is the source of
 truth loaded at runtime; this table is a summary.
@@ -104,5 +113,6 @@ grammar (modifier words dropped, spelling unified), a missing `domain` facet is
 filled in from the asset's `<Domain>/<Class>/<name>/annotation.yaml` storage path,
 a missing `kind` facet is inferred from the asset name against a per-class word
 table (first matching name token wins, no match leaves it absent for lint to
-flag), tags are reordered by facet declaration order, and the file is stamped
-`asa: 1`. Fixing an already-fixed file is a no-op.
+flag), a sound takes it from its `kind` field instead and keeps its other bare
+tags as written, tags are reordered by facet declaration order, and the file is
+stamped `asa: 1`. Fixing an already-fixed file is a no-op.

@@ -1,0 +1,8 @@
+source: AI2-THOR objects, HSSD glTF conversion, ManiSkill copy
+url: https://huggingface.co/datasets/haosulab/AI2THOR
+license: CC-BY-4.0
+license_url: https://creativecommons.org/licenses/by/4.0/
+authors: Allen Institute for AI (AI2-THOR assets), converted to glTF by the HSSD team (hssd/ai2thor-hab) and repackaged by the ManiSkill team (haosulab/AI2THOR)
+citation: Kolve et al., AI2-THOR, An Interactive 3D Environment for Visual AI, arXiv:1712.05474, 2017
+items:
+  - Dining_Table_203_1.glb: member ai2thor/ai2thorhab-uncompressed/assets/objects/Dining_Table_203_1.glb of ai2thor.zip at revision 1a173d5de042aaad8f1af09d4d2bc2ce4004b28a, verbatim, sha256 07174a0324a77a1ea1262352b588fdea522e744c95f6f5f6ff194c3484c08af5

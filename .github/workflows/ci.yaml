@@ -25,12 +25,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: src/pyproject.toml
       - uses: actions/cache@v4
         with:
           path: ~/.cache/chroma
           key: chroma-onnx-models
-      - run: pip install "./src[test]"
+      - run: pip install "./src[db,test]"
       - run: pytest tests/

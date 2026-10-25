@@ -6,7 +6,7 @@ asa: 1
 
 facets:
   domain:
-    applies: [object, material, human]
+    applies: [object, material, human, sound]
     cardinality: multi
     recommend: true
     open: true
@@ -14,7 +14,7 @@ facets:
     values: [common, hospital, office, residential, warehouse]
 
   kind:
-    applies: [object, material]
+    applies: [object, material, sound]
     cardinality: single
     recommend: true
     open: true
@@ -27,6 +27,7 @@ facets:
       material: [asphalt, brick, ceramic, composite, concrete, fabric, gem,
                  glass, gravel, ground, leather, light, metal, paint, paper,
                  plaster, plastic, rubber, stone, tile, water, wood]
+      sound: [alarm, footstep, motor, music, onset, speech]
 
   mount:
     applies: [object]
@@ -101,7 +102,7 @@ facets:
     values: [casual, doctor, nurse, office, patient, resident, worker]
 
   origin:
-    applies: [object, material, human]
+    applies: [object, material, human, sound]
     cardinality: single
     open: true
     embed: false

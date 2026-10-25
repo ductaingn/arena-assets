@@ -35,6 +35,7 @@ def test_class_from_dirname():
     assert class_from_dirname("Object") == "object"
     assert class_from_dirname("Material") == "material"
     assert class_from_dirname("Human") == "human"
+    assert class_from_dirname("Sound") == "sound"
     assert class_from_dirname("Nonsense") is None
 
 
@@ -44,7 +45,7 @@ def test_load_spec_default_has_expected_facets():
     assert "domain" in spec.facets
     assert "human::gender" in spec.facets
     domain = spec.facets["domain"]
-    assert domain.applies == ["object", "material", "human"]
+    assert domain.applies == ["object", "material", "human", "sound"]
     assert domain.cardinality == "multi"
     assert domain.open is True
     assert domain.embed is True
@@ -106,6 +107,12 @@ def test_load_spec_default_has_expected_facets():
         "water",
         "wood",
     ]
+
+
+def test_load_spec_sound_shares_domain_kind_and_origin():
+    spec = load_spec()
+    assert [key for key, facet in spec.facets.items() if facet.applies_to("sound")] == ["domain", "kind", "origin"]
+    assert spec.facets["kind"].values_for("sound") == ["alarm", "footstep", "motor", "music", "onset", "speech"]
 
 
 def test_words_drops_embed_false_facets_keeps_unknown_and_bare():

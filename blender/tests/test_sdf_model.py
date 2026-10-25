@@ -1,6 +1,6 @@
 import xml.etree.ElementTree as ET
 
-from arena_assets.utils.ModelConverter import sdf_model
+from arena_assets_blender import sdf_model
 
 
 def test_sdf_model_is_static_and_collides_with_its_visual_mesh():

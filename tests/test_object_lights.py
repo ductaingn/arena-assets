@@ -2,7 +2,6 @@ import json
 import logging
 import math
 import subprocess
-import sys
 import xml.etree.ElementTree as ET
 
 import pytest
@@ -16,7 +15,7 @@ from arena_assets.impl.build.ObjectDatabaseBuilder import (
     object_lights,
 )
 from arena_assets.utils.geom import BoundingBox
-from arena_assets.utils.ModelConverter import sdf_model
+from arena_assets.utils.ModelConverter import environment
 from arena_assets.utils.ModelConverter.lights import SourceLight, SourceMaterial, color_temperature, nearest_material
 
 BULB = {"fixture": "bulb", "pose": [[0.0, 0.0, 1.5], [1.0, 0.0, 0.0, 0.0]], "lumens": 800.0}
@@ -405,31 +404,81 @@ bpy.ops.export_scene.gltf(filepath=sys.argv[1], export_lights=True)
 """
 
 
-def _write_lamp_source(directory, annotation, script=LAMP_SOURCE_SCRIPT):
+SCENE_TYPES_SCRIPT = """
+import json
+import sys
+
+import bpy
+
+from arena_assets_blender.converter import ModelConverter
+
+with ModelConverter() as model_converter:
+    model_converter.load(sys.argv[1])
+    bpy.context.view_layer.update()
+    types = sorted(obj.type for obj in bpy.context.scene.objects)
+    bounding_box = model_converter.bounding_box().round(4)
+print(json.dumps([types, bounding_box]))
+"""
+
+MATERIAL_FACES_SCRIPT = """
+import json
+import sys
+
+import bpy
+
+from arena_assets_blender.converter import ModelConverter
+
+with ModelConverter() as model_converter:
+    model_converter.load(sys.argv[1])
+    bpy.context.view_layer.update()
+    faces = {}
+    for obj in bpy.context.scene.objects:
+        if obj.type != "MESH":
+            continue
+        for polygon in obj.data.polygons:
+            name = obj.material_slots[polygon.material_index].material.name
+            corners = [obj.matrix_world @ obj.data.vertices[index].co for index in polygon.vertices]
+            faces.setdefault(name, []).extend(tuple(round(component, 3) + 0.0 for component in corner) for corner in corners)
+print(json.dumps({name: [list(map(min, zip(*corners, strict=True))), list(map(max, zip(*corners, strict=True)))] for name, corners in faces.items()}))
+"""
+
+EMISSIVE_SCRIPT = """
+import json
+import sys
+
+from arena_assets_blender.converter import ModelConverter
+
+with ModelConverter() as model_converter:
+    model_converter.load(sys.argv[1])
+    names = [material.name for material in model_converter.emissive_materials()]
+print(json.dumps(names))
+"""
+
+
+def _in_blender(python, script, *args):
+    """Last stdout line of a script run in the Blender worker's interpreter, as JSON."""
+    result = subprocess.run([python, "-c", script, *map(str, args)], capture_output=True, text=True, timeout=120, env=environment())
+    assert result.returncode == 0, result.stderr[-2000:]
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def _write_lamp_source(python, directory, annotation, script=LAMP_SOURCE_SCRIPT):
     directory.mkdir(parents=True)
-    subprocess.run([sys.executable, "-c", script, str(directory / "lamp.glb")], check=True, capture_output=True, timeout=120)
+    subprocess.run([python, "-c", script, str(directory / "lamp.glb")], check=True, capture_output=True, timeout=120, env=environment())
     (directory / ANNOTATION_NAME).write_text(yaml.safe_dump(annotation))
 
 
-def _scene_types(path):
-    import bpy
-
-    from arena_assets.utils.ModelConverter.converter import ModelConverter
-
-    with ModelConverter() as model_converter:
-        model_converter.load(str(path))
-        bpy.context.view_layer.update()
-        types = sorted(obj.type for obj in bpy.context.scene.objects)
-        bounding_box = model_converter.bounding_box().round(4)
-    return types, bounding_box
+def _scene_types(python, path):
+    types, bounding_box = _in_blender(python, SCENE_TYPES_SCRIPT, path)
+    return types, BoundingBox(bounding_box)
 
 
-def _build_lamp(tmp_path, annotation, script=LAMP_SOURCE_SCRIPT):
+def _build_lamp(python, tmp_path, annotation, script=LAMP_SOURCE_SCRIPT):
     from arena_assets.impl.build.ObjectDatabaseBuilder import ObjectDatabaseBuilder
 
     input_path = tmp_path / "input"
     output_path = tmp_path / "output"
-    _write_lamp_source(input_path / "Object" / "lamp", annotation, script)
+    _write_lamp_source(python, input_path / "Object" / "lamp", annotation, script)
 
     builder = ObjectDatabaseBuilder(input_path, output_path)
     builder.enable("formats", "usdz,sdf,fbx")
@@ -440,8 +489,8 @@ def _build_lamp(tmp_path, annotation, script=LAMP_SOURCE_SCRIPT):
     return builder.process_entity(source_annotation, dest), dest
 
 
-def _process_lamp(tmp_path, annotation, script=LAMP_SOURCE_SCRIPT):
-    built, dest = _build_lamp(tmp_path, annotation, script)
+def _process_lamp(python, tmp_path, annotation, script=LAMP_SOURCE_SCRIPT):
+    built, dest = _build_lamp(python, tmp_path, annotation, script)
     assert built is not None
     return built, dest
 
@@ -449,11 +498,9 @@ def _process_lamp(tmp_path, annotation, script=LAMP_SOURCE_SCRIPT):
 EXPECTED_BOX = BoundingBox(((-0.5, 0.5), (-0.5, 0.5), (0.0, 1.9)))
 
 
-def test_build_extracts_source_lights_and_strips_them_from_every_model(tmp_path, caplog):
-    pytest.importorskip("bpy")
-
+def test_build_extracts_source_lights_and_strips_them_from_every_model(blender_python, tmp_path, caplog):
     with caplog.at_level(logging.WARNING):
-        built, dest = _process_lamp(tmp_path, {"desc": "floor lamp"})
+        built, dest = _process_lamp(blender_python, tmp_path, {"desc": "floor lamp"})
 
     assert "Sun" in caplog.text
 
@@ -477,48 +524,27 @@ def test_build_extracts_source_lights_and_strips_them_from_every_model(tmp_path,
     assert [light["fixture"] for light in written["lights"]] == ["bulb", "spot"]
 
     for model in (dest / "lamp.usdz", dest / "lamp.sdf" / "lamp.dae", dest / "lamp.fbx"):
-        types, bounding_box = _scene_types(model)
+        types, bounding_box = _scene_types(blender_python, model)
         assert "MESH" in types, model
         assert "LIGHT" not in types, model
         assert [c for side in bounding_box for c in side] == pytest.approx([c for side in EXPECTED_BOX for c in side], abs=1e-3), model
 
 
-def test_build_keeps_annotated_lights_over_source_lights(tmp_path):
-    pytest.importorskip("bpy")
-
+def test_build_keeps_annotated_lights_over_source_lights(blender_python, tmp_path):
     annotated = {"name": "shade", "fixture": "downlight", "pose": [[0.0, 0.0, 1.8], [1.0, 0.0, 0.0, 0.0]], "lumens": 900.0, "cct_K": 2700.0}
-    built, dest = _process_lamp(tmp_path, {"desc": "floor lamp", "lights": [annotated]})
+    built, dest = _process_lamp(blender_python, tmp_path, {"desc": "floor lamp", "lights": [annotated]})
 
     assert built.lights == [converter.structure(annotated, ObjectLight)]
-    types, _ = _scene_types(dest / "lamp.sdf" / "lamp.dae")
+    types, _ = _scene_types(blender_python, dest / "lamp.sdf" / "lamp.dae")
     assert "LIGHT" not in types
 
 
-def _material_faces(path):
-    import bpy
-
-    from arena_assets.utils.ModelConverter.converter import ModelConverter
-
-    with ModelConverter() as model_converter:
-        model_converter.load(str(path))
-        bpy.context.view_layer.update()
-        faces = {}
-        for obj in bpy.context.scene.objects:
-            if obj.type != "MESH":
-                continue
-            for polygon in obj.data.polygons:
-                name = obj.material_slots[polygon.material_index].material.name
-                corners = [obj.matrix_world @ obj.data.vertices[index].co for index in polygon.vertices]
-                faces.setdefault(name, []).extend(tuple(round(component, 3) + 0.0 for component in corner) for corner in corners)
-    return {name: (tuple(map(min, zip(*corners, strict=True))), tuple(map(max, zip(*corners, strict=True)))) for name, corners in faces.items()}
+def _material_faces(python, path):
+    return {name: (tuple(low), tuple(high)) for name, (low, high) in _in_blender(python, MATERIAL_FACES_SCRIPT, path).items()}
 
 
-def _emissive(path):
-    from arena_assets.utils.ModelConverter.converter import ModelConverter
-
-    with ModelConverter() as model_converter:
-        model_converter.load(str(path))
-        return [material.name for material in model_converter.emissive_materials()]
+def _emissive(python, path):
+    return _in_blender(python, EMISSIVE_SCRIPT, path)
 
 
 def _collada_emissions(path):
@@ -547,123 +573,67 @@ PANEL_BOX = ((0.9, -0.1, 0.0), (1.1, 0.1, 0.2))
 COAL_BOX = ((-1.1, -0.1, 0.0), (-0.9, 0.1, 0.2))
 
 
-def test_build_assigns_nearest_emissive_material_as_glow(tmp_path):
-    pytest.importorskip("bpy")
-
-    built, _ = _process_lamp(tmp_path, {"desc": "floor lamp"}, GLOW_LAMP_SOURCE_SCRIPT)
+def test_build_assigns_nearest_emissive_material_as_glow(blender_python, tmp_path):
+    built, _ = _process_lamp(blender_python, tmp_path, {"desc": "floor lamp"}, GLOW_LAMP_SOURCE_SCRIPT)
 
     assert [(light.name, light.fixture, light.glow) for light in built.lights] == [("light", LightFixture.BULB, "Shade"), ("light_1", LightFixture.SPOT, "Screen")]
     written = yaml.safe_load(yaml.safe_dump(converter.unstructure(built)))
     assert [light["glow"] for light in written["lights"]] == ["Shade", "Screen"]
 
 
-def test_build_exports_each_glow_material_as_own_sdf_visual(tmp_path):
-    pytest.importorskip("bpy")
-
-    _, dest = _process_lamp(tmp_path, {"desc": "floor lamp"}, GLOW_LAMP_SOURCE_SCRIPT)
+def test_build_exports_each_glow_material_as_own_sdf_visual(blender_python, tmp_path):
+    _, dest = _process_lamp(blender_python, tmp_path, {"desc": "floor lamp"}, GLOW_LAMP_SOURCE_SCRIPT)
     sdf = dest / "lamp.sdf"
 
     assert _link(sdf / "lamp.sdf") == (_plain() + _glow(0, "Screen") + _glow(1, "Shade", "1 0.5 0.25"))
-    assert _material_faces(sdf / "lamp.dae") == {"Base": BODY_BOX, "Ember": COAL_BOX}
-    assert _material_faces(sdf / "lamp.glow_0.dae") == {"Screen": PANEL_BOX}
-    assert _material_faces(sdf / "lamp.glow_1.dae") == {"Shade": SHADE_FACE}
+    assert _material_faces(blender_python, sdf / "lamp.dae") == {"Base": BODY_BOX, "Ember": COAL_BOX}
+    assert _material_faces(blender_python, sdf / "lamp.glow_0.dae") == {"Screen": PANEL_BOX}
+    assert _material_faces(blender_python, sdf / "lamp.glow_1.dae") == {"Shade": SHADE_FACE}
 
 
-def test_build_clears_glow_emission_in_every_model(tmp_path):
-    pytest.importorskip("bpy")
-
-    _, dest = _process_lamp(tmp_path, {"desc": "floor lamp"}, GLOW_LAMP_SOURCE_SCRIPT)
+def test_build_clears_glow_emission_in_every_model(blender_python, tmp_path):
+    _, dest = _process_lamp(blender_python, tmp_path, {"desc": "floor lamp"}, GLOW_LAMP_SOURCE_SCRIPT)
     sdf = dest / "lamp.sdf"
 
     for model in (dest / "lamp.usdz", dest / "lamp.fbx"):
-        assert _emissive(model) == ["Ember"], model
-        assert _material_faces(model) == {"Base": BODY_BOX, "Ember": COAL_BOX, "Screen": PANEL_BOX, "Shade": SHADE_FACE}, model
+        assert _emissive(blender_python, model) == ["Ember"], model
+        assert _material_faces(blender_python, model) == {"Base": BODY_BOX, "Ember": COAL_BOX, "Screen": PANEL_BOX, "Shade": SHADE_FACE}, model
     assert _collada_emissions(sdf / "lamp.dae") == {"Base": [0.0, 0.0, 0.0, 1.0], "Ember": pytest.approx([1.0, 0.2, 0.0, 1.0], abs=1e-3)}
     assert _collada_emissions(sdf / "lamp.glow_0.dae") == {"Screen": [0.0, 0.0, 0.0, 1.0]}
     assert _collada_emissions(sdf / "lamp.glow_1.dae") == {"Shade": [0.0, 0.0, 0.0, 1.0]}
 
 
-def test_build_glows_only_annotated_material(tmp_path):
-    pytest.importorskip("bpy")
-
+def test_build_glows_only_annotated_material(blender_python, tmp_path):
     annotated = {"name": "shade", "fixture": "bulb", "pose": [[0.0, 0.0, 1.2], [1.0, 0.0, 0.0, 0.0]], "lumens": 900.0, "glow": "Shade"}
-    built, dest = _process_lamp(tmp_path, {"desc": "floor lamp", "lights": [annotated]}, GLOW_LAMP_SOURCE_SCRIPT)
+    built, dest = _process_lamp(blender_python, tmp_path, {"desc": "floor lamp", "lights": [annotated]}, GLOW_LAMP_SOURCE_SCRIPT)
     sdf = dest / "lamp.sdf"
 
     assert built.lights == [converter.structure(annotated, ObjectLight)]
     assert _link(sdf / "lamp.sdf") == _plain() + _glow(0, "Shade", "1 0.5 0.25")
     assert not (sdf / "lamp.glow_1.dae").exists()
-    assert _material_faces(sdf / "lamp.dae") == {"Base": BODY_BOX, "Ember": COAL_BOX, "Screen": PANEL_BOX}
-    assert _material_faces(sdf / "lamp.glow_0.dae") == {"Shade": SHADE_FACE}
-    assert _emissive(dest / "lamp.usdz") == ["Ember", "Screen"]
+    assert _material_faces(blender_python, sdf / "lamp.dae") == {"Base": BODY_BOX, "Ember": COAL_BOX, "Screen": PANEL_BOX}
+    assert _material_faces(blender_python, sdf / "lamp.glow_0.dae") == {"Shade": SHADE_FACE}
+    assert _emissive(blender_python, dest / "lamp.usdz") == ["Ember", "Screen"]
 
 
-def test_missing_glow_material_raises_value_error(tmp_path):
-    pytest.importorskip("bpy")
-    from arena_assets.utils.ModelConverter.converter import ModelConverter
+def test_missing_glow_material_raises_value_error(blender_python, tmp_path):
+    from arena_assets.utils.ModelConverter import BlenderError, BlenderWorker
 
-    _write_lamp_source(tmp_path / "lamp", {}, GLOW_LAMP_SOURCE_SCRIPT)
-    with ModelConverter() as model_converter:
-        model_converter.load(str(tmp_path / "lamp" / "lamp.glb"))
-        with pytest.raises(ValueError, match="Glass.*Base, Ember, Screen, Shade"):
-            model_converter.prepare_glow(["Shade", "Glass"])
-        assert [material.name for material in model_converter.emissive_materials()] == ["Ember", "Screen", "Shade"]
-
-
-def _add_cube(location, *materials):
-    import bpy
-
-    bpy.ops.mesh.primitive_cube_add(size=1.0, location=location)
-    cube = bpy.context.active_object
-    for material in materials:
-        cube.data.materials.append(material)
-    for polygon in cube.data.polygons:
-        polygon.material_index = len(materials) - 1 if polygon.normal.z > 0.5 else 0
-    return cube
+    _write_lamp_source(blender_python, tmp_path / "lamp", {}, GLOW_LAMP_SOURCE_SCRIPT)
+    source = str(tmp_path / "lamp" / "lamp.glb")
+    worker = BlenderWorker()
+    try:
+        with pytest.raises(BlenderError, match="Glass.*Base, Ember, Screen, Shade"):
+            worker.run([("load", source), ("prepare_glow", ["Shade", "Glass"])])
+        assert [material["name"] for material in worker.run([("load", source), ("emissive_materials",)]).values[1]] == ["Ember", "Screen", "Shade"]
+    finally:
+        worker.close()
 
 
-def test_prepare_glow_splits_every_instance_of_shared_mesh(tmp_path):
-    pytest.importorskip("bpy")
-    import bpy
-
-    from arena_assets.utils.ModelConverter.converter import ModelConverter
-
-    with ModelConverter() as model_converter:
-        cube = _add_cube((0.0, 0.0, 0.5), bpy.data.materials.new("Base"), bpy.data.materials.new("Shade"))
-        twin = bpy.data.objects.new("Twin", cube.data)
-        twin.location = (2.0, 0.0, 0.5)
-        bpy.context.scene.collection.objects.link(twin)
-        model_converter.prepare_glow(["Shade"])
-        model_converter.save(str(tmp_path / "lamp.sdf"))
-
-    assert _link(tmp_path / "lamp.sdf" / "lamp.sdf") == _plain() + _glow(0, "Shade")
-    assert _material_faces(tmp_path / "lamp.sdf" / "lamp.dae") == {"Base": ((-0.5, -0.5, 0.0), (2.5, 0.5, 1.0))}
-    assert _material_faces(tmp_path / "lamp.sdf" / "lamp.glow_0.dae") == {"Shade": ((-0.5, -0.5, 1.0), (2.5, 0.5, 1.0))}
-
-
-def test_sdf_of_fully_glowing_model_has_only_glow_visual(tmp_path):
-    pytest.importorskip("bpy")
-    import bpy
-
-    from arena_assets.utils.ModelConverter.converter import ModelConverter
-
-    with ModelConverter() as model_converter:
-        shade = bpy.data.materials.new("Shade")
-        shade.use_nodes = True
-        _add_cube((0.0, 0.0, 0.5), shade)
-        model_converter.prepare_glow(["Shade"])
-        model_converter.save(str(tmp_path / "lamp.sdf"))
-
-    assert _link(tmp_path / "lamp.sdf" / "lamp.sdf") == _glow(0, "Shade", "0.8 0.8 0.8")
-    assert sorted(path.name for path in (tmp_path / "lamp.sdf").iterdir()) == ["lamp.glow_0.dae", "lamp.sdf"]
-
-
-def test_build_fails_on_annotated_glow_naming_missing_material(tmp_path, caplog):
-    pytest.importorskip("bpy")
-
+def test_build_fails_on_annotated_glow_naming_missing_material(blender_python, tmp_path, caplog):
     annotated = {"fixture": "bulb", "pose": [[0.0, 0.0, 1.2], [1.0, 0.0, 0.0, 0.0]], "lumens": 900.0, "glow": "Glass"}
     with caplog.at_level(logging.ERROR):
-        built, dest = _build_lamp(tmp_path, {"desc": "floor lamp", "lights": [annotated]}, GLOW_LAMP_SOURCE_SCRIPT)
+        built, dest = _build_lamp(blender_python, tmp_path, {"desc": "floor lamp", "lights": [annotated]}, GLOW_LAMP_SOURCE_SCRIPT)
 
     assert built is None
     assert "Glass" in caplog.text
@@ -671,11 +641,9 @@ def test_build_fails_on_annotated_glow_naming_missing_material(tmp_path, caplog)
     assert list(dest.iterdir()) == []
 
 
-def test_build_without_glow_materials_writes_single_visual_sdf(tmp_path):
-    pytest.importorskip("bpy")
-
-    built, dest = _process_lamp(tmp_path, {"desc": "floor lamp"})
+def test_build_without_glow_materials_writes_single_visual_sdf(blender_python, tmp_path):
+    built, dest = _process_lamp(blender_python, tmp_path, {"desc": "floor lamp"})
 
     assert [light.glow for light in built.lights] == [None, None]
     assert sorted(path.name for path in (dest / "lamp.sdf").iterdir()) == ["lamp.dae", "lamp.sdf"]
-    assert (dest / "lamp.sdf" / "lamp.sdf").read_text() == sdf_model("lamp")
+    assert _link(dest / "lamp.sdf" / "lamp.sdf") == _plain()
