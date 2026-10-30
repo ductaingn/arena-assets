@@ -1,25 +1,65 @@
+import attrs
 import numpy as np
 import pytest
 
 from arena_assets.impl import Face
 from arena_assets.impl.build.HumanDatabaseBuilder import HumanAnnotation, measure_body
-from arena_assets.utils.human import Legs, Skin, legs, pelvis_clearance, read_skin
+from arena_assets.utils.human import Legs, PelvisClearance, Skin, legs, pelvis_clearance, read_skin, seated_clearance
 
 
-def body(coat: bool = False) -> Skin:
-    """Pelvis 0.9 m up, hip joints 0.02 m lower and 0.01 m behind it, thighs reaching 0.1 m behind the hip joints."""
+def rigid(dominant: list[str]) -> dict[str, np.ndarray]:
+    return {joint: np.array([1.0 if name == joint else 0.0 for name in dominant]) for joint in set(dominant)}
+
+
+def body(coat: bool = False, hem: bool = False) -> Skin:
+    """Pelvis 0.9 m up, hip joints 0.02 m lower and 0.01 m behind it, buttocks 0.08 m below and 0.1 m behind the hip joints moving with the thighs."""
     joints = {"Hips": np.array([0.0, 0.0, 0.9]), "LeftUpLeg": np.array([-0.01, 0.1, 0.88]), "RightUpLeg": np.array([-0.01, -0.1, 0.88])}
     points = [(-0.11, 0.1, 0.8), (0.05, 0.1, 0.6), (-0.11, -0.1, 0.8), (0.0, 0.0, 1.0)]
     dominant = ["LeftUpLeg", "LeftUpLeg", "RightUpLeg", "Hips"]
     if coat:
         points.append((-0.4, 0.0, 0.2))
         dominant.append("Hips")
-    return Skin(joints=joints, points=np.array(points), dominant=dominant)
+    if hem:
+        points.append((-0.1, 0.1, 0.7))
+        dominant.append("LeftUpLeg")
+    return Skin(joints=joints, points=np.array(points), dominant=dominant, weights=rigid(dominant))
 
 
 def test_clearance_is_the_thigh_behind_the_hip_joint_seen_from_the_pelvis():
     clearance = pelvis_clearance(body(), np.array([1.0, 0.0]))
     assert (clearance.sit, clearance.lie) == pytest.approx((0.02 + 0.1, 0.01 + 0.1))
+
+
+def test_seated_clearance_swings_the_buttocks_under_the_hips_with_the_thighs():
+    seated = dict(seated_clearance(body(), np.array([1.0, 0.0])))
+    assert seated[0.0] == pytest.approx(0.02 + 0.08)
+    assert seated[round(np.pi / 2, 4)] == pytest.approx(0.02 + 0.1)
+
+
+def test_buttocks_blended_with_the_pelvis_sink_less_than_the_thighs_swing():
+    skin = body()
+    half = {joint: weight * (0.5 if joint != "Hips" else 1.0) for joint, weight in skin.weights.items()}
+    half["Hips"] = half["Hips"] + np.array([0.5, 0.5, 0.5, 0.0])
+    blended = dict(seated_clearance(Skin(joints=skin.joints, points=skin.points, dominant=skin.dominant, weights=half), np.array([1.0, 0.0])))
+    rigid = dict(seated_clearance(skin, np.array([1.0, 0.0])))
+    level = round(np.pi / 2, 4)
+    assert rigid[level] > blended[level] > rigid[0.0]
+
+
+def test_hems_below_the_buttocks_do_not_count():
+    assert pelvis_clearance(body(hem=True), np.array([1.0, 0.0])) == pelvis_clearance(body(), np.array([1.0, 0.0]))
+
+
+def test_sit_at_interpolates_the_seated_table_and_falls_back_to_sit():
+    clearance = PelvisClearance(sit=0.12, lie=0.11, seated=((0.0, 0.2), (2.0, 0.1)))
+    assert clearance.sit_at(1.0) == pytest.approx(0.15)
+    assert clearance.sit_at(3.0) == pytest.approx(0.1)
+    assert PelvisClearance(sit=0.12, lie=0.11).sit_at(1.0) == 0.12
+
+
+def test_seated_table_survives_the_annotation_round_trip():
+    clearance = pelvis_clearance(body(), np.array([1.0, 0.0]))
+    assert PelvisClearance(**{**attrs.asdict(clearance), "seated": [list(pair) for pair in clearance.seated]}) == clearance
 
 
 def test_clearance_holds_plain_floats_for_yaml():
@@ -34,14 +74,14 @@ def test_garments_hanging_from_the_pelvis_do_not_count():
 def test_clearance_follows_the_facing():
     turned = body()
     rotate = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
-    turned = Skin(joints={k: rotate @ v for k, v in turned.joints.items()}, points=turned.points @ rotate.T, dominant=turned.dominant)
+    turned = Skin(joints={k: rotate @ v for k, v in turned.joints.items()}, points=turned.points @ rotate.T, dominant=turned.dominant, weights=turned.weights)
     assert pelvis_clearance(turned, np.array([0.0, 1.0])) == pelvis_clearance(body(), np.array([1.0, 0.0]))
 
 
 def test_clearance_needs_both_thighs():
     skin = body()
     with pytest.raises(ValueError, match="RightUpLeg"):
-        pelvis_clearance(Skin(joints=skin.joints, points=skin.points[:2], dominant=skin.dominant[:2]), np.array([1.0, 0.0]))
+        pelvis_clearance(Skin(joints=skin.joints, points=skin.points[:2], dominant=skin.dominant[:2], weights={k: v[:2] for k, v in skin.weights.items()}), np.array([1.0, 0.0]))
 
 
 DAE = """<?xml version="1.0"?>
@@ -73,6 +113,8 @@ def test_read_skin_takes_joints_from_inverse_binds_and_points_from_the_bind_shap
     assert skin.joints["LeftUpLeg"] == pytest.approx([0.0, 0.1, 0.8])
     assert skin.points == pytest.approx(np.array([[0.0, 0.0, 1.5], [0.1, 0.0, 0.5], [0.0, 0.1, 0.5]]))
     assert skin.dominant == ["Hips", "Hips", "LeftUpLeg"]
+    assert skin.weights["Hips"] == pytest.approx([1.0, 0.7, 0.0])
+    assert skin.weights["LeftUpLeg"] == pytest.approx([0.0, 0.3, 1.0])
 
 
 def test_legs_run_from_the_pelvis_through_both_leg_chains_to_the_soles():

@@ -74,3 +74,7 @@ def test_body_measurements_roundtrip_and_are_left_out_until_measured():
     assert converter.unstructure(annotation)["legs"] == {"hip": 0.015, "thigh": 0.36, "shin": 0.37, "ankle": 0.08}
     assert converter.structure({**converter.unstructure(annotation), "name": "Nurse01", "path": "Human/Nurse01"}, HumanAnnotation) == annotation
     assert HumanAnnotation.from_metadata(annotation.as_metadata) == annotation
+    annotation.pelvis_clearance = PelvisClearance(sit=0.12, lie=0.11, seated=((0.0, 0.14), (1.5708, 0.12)))
+    assert converter.unstructure(annotation)["pelvis_clearance"]["seated"] == [(0.0, 0.14), (1.5708, 0.12)]
+    assert converter.structure({**converter.unstructure(annotation), "name": "Nurse01", "path": "Human/Nurse01"}, HumanAnnotation) == annotation
+    assert HumanAnnotation.from_metadata(annotation.as_metadata) == annotation
