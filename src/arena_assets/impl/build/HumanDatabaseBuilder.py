@@ -47,6 +47,7 @@ class HumanAnnotation(SpatialAnnotation):
         return annotation
 
 
+converter.register_unstructure_hook(PelvisClearance, make_dict_unstructure_fn(PelvisClearance, converter, seated=override(omit_if_default=True)))
 converter.register_unstructure_hook(
     HumanAnnotation,
     make_dict_unstructure_fn(HumanAnnotation, converter, pelvis_clearance=override(omit_if_default=True), legs=override(omit_if_default=True)),
