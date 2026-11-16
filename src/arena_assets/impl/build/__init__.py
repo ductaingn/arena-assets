@@ -31,18 +31,6 @@ class OverwriteMode(str, Enum):
     OVERWRITE = "overwrite"
     ANNOTATIONS_ONLY = "annotations"
 
-    @classmethod
-    def _missing_(cls, value):
-        """
-        Legacy integer API shim. Accepts 0 (SKIP), 1 (OVERWRITE), -1 (ANNOTATIONS_ONLY).
-        """
-        legacy = {
-            "0": cls.SKIP,
-            "1": cls.OVERWRITE,
-            "-1": cls.ANNOTATIONS_ONLY,
-        }
-        return legacy.get(str(value))
-
 
 class OptionRegistry:
     def __init__(self):

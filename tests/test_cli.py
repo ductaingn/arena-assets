@@ -3,6 +3,7 @@ import json
 from typer.testing import CliRunner
 
 from arena_assets.__main__ import app
+from arena_assets.impl.fetch import package_version
 from arena_assets.cli.db.query import parse_filters
 
 runner = CliRunner()
@@ -22,7 +23,7 @@ def test_parse_filters_equality_on_strings_and_booleans():
 def test_version():
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
-    assert result.output.startswith("Arena Assets v")
+    assert result.output.splitlines()[0] == f"Arena Assets v{package_version()}" != "Arena Assets vunknown"
 
 
 def test_invalid_log_level():

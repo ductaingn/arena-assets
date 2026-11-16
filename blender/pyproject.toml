@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arena_assets_blender"
-version = "0.1.0"
+version = "1.0.0"
 description = "Blender model conversion worker for arena_assets"
 authors = [
     { name = "kuro", email = "giang.nht108201@gmail.com" },

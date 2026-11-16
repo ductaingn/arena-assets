@@ -16,13 +16,9 @@ add_cmd(app)
 @app.command()
 def version():
     """Show version information."""
-    import importlib.metadata
+    from arena_assets.impl.fetch import package_version
 
-    try:
-        package_version = importlib.metadata.version("arena_assets")
-    except importlib.metadata.PackageNotFoundError:
-        package_version = "unknown"
-    typer.echo(f"Arena Assets v{package_version}")
+    typer.echo(f"Arena Assets v{package_version()}")
     typer.echo("Build, query, and manage 3D model databases")
 
 

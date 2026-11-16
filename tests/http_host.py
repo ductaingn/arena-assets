@@ -9,6 +9,7 @@ class Host(http.server.ThreadingHTTPServer):
         self.statuses: dict[str, int] = {}
         self.served: list[str] = []
         self.authorizations: dict[str, str | None] = {}
+        self.agents: dict[str, str | None] = {}
         self.posted: dict[str, bytes] = {}
 
     @property
@@ -22,6 +23,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         self.server.served.append(self.path)
         self.server.authorizations[self.path] = self.headers.get("Authorization")
+        self.server.agents[self.path] = self.headers.get("User-Agent")
         if self.path in self.server.statuses:
             self.send_error(self.server.statuses[self.path])
             return

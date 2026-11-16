@@ -15,7 +15,8 @@ import attrs
 import pytest
 
 import arena_assets
-from arena_assets.importers.providers import HFHub, Http, Provider, logger
+from arena_assets.importers.providers import AmbientCG, HFHub, Http, PolyHaven, Provider, logger
+from arena_assets.impl.fetch import user_agent
 
 SRC = str(Path(arena_assets.__file__).parent.parent)
 
@@ -237,6 +238,11 @@ def test_hfhub_token_header(tmp_path):
     assert req.get_header("Authorization") == "Bearer tok"
     empty = _hf_home(tmp_path, None)
     assert _authorization({"HF_HOME": str(empty), "HOME": str(tmp_path)}) == "none"
+
+
+@pytest.mark.parametrize("provider", [Http("https://example.org"), PolyHaven(), AmbientCG(), HFHub("org/data", token="tok")], ids=lambda provider: provider.name)
+def test_upstream_requests_carry_the_agent(provider):
+    assert provider._request("https://example.org/a").get_header("User-agent") == user_agent()
 
 
 def test_hfhub_token_stays_off_a_redirect_to_another_host(host, tmp_path):

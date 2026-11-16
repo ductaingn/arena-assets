@@ -96,7 +96,7 @@ def _ply_lists_binary(data: bytes, offset: int, count: int, properties: list[tup
     if offset + count * uniform.itemsize <= len(data):
         rows = np.frombuffer(data, uniform, count, offset)
         if np.all(rows["n"] == 3):
-            return rows["items"].astype(np.int64).tolist(), offset + count * uniform.itemsize
+            return rows["items"].astype(np.int64).reshape(count, 3).tolist(), offset + count * uniform.itemsize
     rows = []
     for _ in range(count):
         size = int(np.frombuffer(data, count_type, 1, offset)[0])

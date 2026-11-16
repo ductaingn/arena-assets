@@ -7,7 +7,7 @@ import urllib.parse
 
 import pytest
 
-from arena_assets.impl.fetch import DEFAULT_URL, MAX_UPLOAD, Bucket, StoreError, cache_root, fetch_database, outermost
+from arena_assets.impl.fetch import DEFAULT_URL, MAX_UPLOAD, Bucket, StoreError, cache_root, fetch_database, outermost, user_agent
 from arena_assets.utils.logging import initialize
 
 
@@ -79,6 +79,19 @@ def test_index_is_fetched_once_per_ttl_across_processes(store):
     assert len(store.seen("GET", "/public/index.json")) == 1
 
 
+@pytest.mark.parametrize("declared", [None, 1])
+def test_index_of_a_known_format_lists(store, declared):
+    store.index_format = declared
+    store.put("public", "models/a/x.obj", b"1")
+    assert [entry["name"] for entry in Bucket("public/models").listdir("")] == ["a/x.obj"]
+
+
+def test_index_of_a_newer_format_asks_for_an_update(store):
+    store.index_format = 2
+    with pytest.raises(StoreError, match="public/index.json has format 2, arena_assets .* reads format 1 at most: update arena_assets"):
+        Bucket("public/models").listdir("")
+
+
 def test_index_is_requested_gzip_compressed(store):
     store.put("public", "models/a/x.obj", b"1")
     assert Bucket("public/models").object_exists("a/x.obj")
@@ -88,7 +101,7 @@ def test_index_is_requested_gzip_compressed(store):
 def test_expired_index_revalidates_with_its_etag(store, monkeypatch):
     store.put("public", "models/a/x.obj", b"1")
     Bucket("public/models").listdir("a")
-    monkeypatch.setenv("ARENA_MODELS_TTL", "0")
+    monkeypatch.setenv("ARENA_ASSETS_TTL", "0")
     assert Bucket("public/models").object_exists("a/x.obj")
     second = store.seen("GET", "/public/index.json")[1]
     assert second["If-None-Match"] == f'"public-{store.generation}"'
@@ -147,6 +160,7 @@ def test_refused_read_refreshes_a_token_from_the_stored_gcloud_login(private, ho
     Bucket("arena-internal").listdir("")
     assert private.seen("GET", "/arena-internal/index.json")[-1]["Authorization"] == "Bearer good"
     assert urllib.parse.parse_qs(host.posted["/token"].decode()) == {"grant_type": ["refresh_token"], "client_id": ["cli"], "client_secret": ["s"], "refresh_token": ["r-me"]}
+    assert host.agents["/token"] == user_agent()
 
 
 def test_stored_gcloud_login_without_the_active_account_names_the_way_to_get_one(private, monkeypatch, tmp_path):

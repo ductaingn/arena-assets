@@ -1,18 +1,22 @@
 import configparser
 import contextlib
+import functools
 import gzip
 import hashlib
 import http.client
+import importlib.metadata
 import json
 import os
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 import typing
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path, PurePosixPath
 
@@ -22,9 +26,11 @@ from arena_assets.utils.logging import format_file_size, get_logger, get_manager
 DEFAULT_URL = "https://storage.arena-rosnav.org"
 DEFAULT_SOURCE = "public/models"
 BUCKETS = ("public", "arena-internal")
+INDEX_FORMAT = 1
 MAX_UPLOAD = 4 << 30
 TOKEN_HINT = "set ARENA_ASSETS_TOKEN or log in with 'gcloud auth login'"
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+ROOT = Path(__file__).resolve().parents[3]
 
 
 class StoreError(RuntimeError):
@@ -38,6 +44,57 @@ def _reason(e: urllib.error.HTTPError) -> str:
     with contextlib.suppress(ValueError, TypeError, KeyError):
         body = json.loads(body)["error"]
     return str(body or e.reason)
+
+
+def package_version() -> str:
+    """Version of the installed distribution, else of the checkout's package.xml."""
+    try:
+        return importlib.metadata.version("arena_assets")
+    except importlib.metadata.PackageNotFoundError:
+        pass
+    try:
+        return ET.parse(ROOT / "package.xml").getroot().findtext("version", "unknown").strip()
+    except (OSError, ET.ParseError):
+        return "unknown"
+
+
+def _git_revision(root: Path) -> str | None:
+    if not (root / ".git").exists():
+        return None
+    try:
+        head = subprocess.run(["git", "-C", str(root), "rev-parse", "--short=7", "HEAD"], capture_output=True, text=True, check=True, timeout=5).stdout.strip()
+        dirty = subprocess.run(["git", "--no-optional-locks", "-C", str(root), "status", "--porcelain"], capture_output=True, text=True, check=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return f"g{head}.dirty" if dirty else f"g{head}"
+
+
+def _release_revision(root: Path) -> str | None:
+    forks, release = os.environ.get("ARENA_FORKS_DIR"), os.environ.get("ARENA_RELEASE")
+    if not (forks and release):
+        return None
+    try:
+        repos = json.loads((Path(forks) / "releases" / release / "release.json").read_text())["repos"]
+        repo = next(repos[key] for parent in root.parents if (key := root.relative_to(parent).as_posix()) in repos)
+        head = repo["head"][:7]
+        dirty = repo["dirty"]
+    except (OSError, ValueError, KeyError, TypeError, StopIteration):
+        return None
+    if not head:
+        return None
+    return f"g{head}.dirty" if dirty else f"g{head}"
+
+
+def _agent(version: str, root: Path) -> str:
+    revision = _git_revision(root) or _release_revision(root)
+    local = f"+{revision}" if revision else ""
+    return f"arena_assets/{version}{local} Python-urllib/{sys.version_info.major}.{sys.version_info.minor}"
+
+
+@functools.cache
+def user_agent() -> str:
+    """User-Agent of every asset store and token request, the checkout commit taken from git or the fork's release.json."""
+    return _agent(package_version(), ROOT)
 
 
 def store_url() -> str:
@@ -62,7 +119,7 @@ def cache_root() -> Path:
 
 
 def index_ttl() -> int:
-    return int(os.environ.get("ARENA_MODELS_TTL", "86400"))
+    return int(os.environ.get("ARENA_ASSETS_TTL", "86400"))
 
 
 def _gcloud_stored_token() -> str:
@@ -74,7 +131,7 @@ def _gcloud_stored_token() -> str:
         (value,) = db.execute("SELECT value FROM credentials WHERE account_id = ?", (parser["core"]["account"],)).fetchone()
     credentials = json.loads(value)
     body = urllib.parse.urlencode({"grant_type": "refresh_token", **{key: credentials[key] for key in ("client_id", "client_secret", "refresh_token")}}).encode()
-    with urllib.request.urlopen(credentials.get("token_uri") or GOOGLE_TOKEN_URI, body) as resp:
+    with urllib.request.urlopen(urllib.request.Request(credentials.get("token_uri") or GOOGLE_TOKEN_URI, body, headers={"User-Agent": user_agent()})) as resp:
         return json.load(resp)["access_token"]
 
 
@@ -132,6 +189,7 @@ class Bucket:
     @staticmethod
     def _request(url: str, token: str | None = None, **kwargs: typing.Any) -> urllib.request.Request:
         req = urllib.request.Request(url, **kwargs)
+        req.add_header("User-Agent", user_agent())
         if token:
             req.add_header("Authorization", f"Bearer {token}")
         return req
@@ -200,7 +258,7 @@ class Bucket:
         return cache_root() / ".index" / f"{self.bucket}.json"
 
     def _fetch_index(self, revalidate: bool) -> bytes:
-        """The bucket index from disk while younger than ARENA_MODELS_TTL, else revalidated by ETag."""
+        """The bucket index from disk while younger than ARENA_ASSETS_TTL, else revalidated by ETag."""
         path = self._index_path
         etag_path = path.with_suffix(".etag")
         try:
@@ -240,7 +298,10 @@ class Bucket:
         return body
 
     def _load(self, revalidate: bool = False) -> dict[str, dict]:
-        objects = json.loads(self._fetch_index(revalidate))["objects"]
+        index = json.loads(self._fetch_index(revalidate))
+        if index.get("format", INDEX_FORMAT) > INDEX_FORMAT:
+            raise StoreError(f"{self.bucket}/index.json has format {index['format']}, arena_assets {package_version()} reads format {INDEX_FORMAT} at most: update arena_assets")
+        objects = index["objects"]
         return {entry["name"].removeprefix(self._folder): entry for entry in objects if entry["name"].startswith(self._folder)}
 
     def objects(self) -> dict[str, dict]:

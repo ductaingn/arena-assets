@@ -17,6 +17,8 @@ from collections.abc import Callable, Iterable, Iterator
 from email.message import Message
 from pathlib import Path
 
+from arena_assets.impl.fetch import user_agent
+
 logger = logging.getLogger(__name__)
 
 _CHUNK = 1 << 20
@@ -39,7 +41,9 @@ class Provider(abc.ABC):
     backoff: typing.ClassVar[float] = 1.0
 
     def _request(self, url: str, **kwargs: typing.Any) -> urllib.request.Request:
-        return urllib.request.Request(url, **kwargs)
+        req = urllib.request.Request(url, **kwargs)
+        req.add_header("User-Agent", user_agent())
+        return req
 
     def _open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
         return urllib.request.urlopen(req, timeout=self.timeout)
@@ -218,16 +222,10 @@ class PolyHaven(Provider):
     name = "polyhaven"
     _API = "https://api.polyhaven.com"
     _FILES = "https://dl.polyhaven.org"
-    _AGENT = "arena-assets"
 
     def __init__(self, api: str = _API, files: str = _FILES):
         self.api = api.rstrip("/")
         self.files_host = files.rstrip("/")
-
-    def _request(self, url: str, **kwargs: typing.Any) -> urllib.request.Request:
-        req = super()._request(url, **kwargs)
-        req.add_header("User-Agent", self._AGENT)
-        return req
 
     def url(self, relpath: str) -> str:
         """API URL of a relative path, a download URL of the file host as it is."""
@@ -244,15 +242,9 @@ class AmbientCG(Provider):
     name = "ambientcg"
     _HOST = "https://ambientcg.com"
     _PER_PAGE = 500
-    _AGENT = "arena-assets"
 
     def __init__(self, host: str = _HOST):
         self.host = host.rstrip("/")
-
-    def _request(self, url: str, **kwargs: typing.Any) -> urllib.request.Request:
-        req = super()._request(url, **kwargs)
-        req.add_header("User-Agent", self._AGENT)
-        return req
 
     def url(self, relpath: str) -> str:
         return f"{self.host}/get?{urllib.parse.urlencode({'file': relpath})}"

@@ -1,12 +1,17 @@
+import os
+import xml.etree.ElementTree as ET
+
 from setuptools import find_packages, setup
 
 package_name = 'arena_assets'
+version = ET.parse(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'package.xml')).getroot().findtext('version')
 
 setup(
     name=package_name,
+    version=version,
     packages=find_packages(where='src', include=[f'{package_name}*']),
     package_dir={'': 'src'},
-    package_data={package_name: ['semantic/asa.yaml']},
+    package_data={package_name: ['semantic/asa.yaml', 'semantic/seats_example.yaml']},
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
